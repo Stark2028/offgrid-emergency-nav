@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# OSM source data and generated tiles — large binaries, rebuilt from the pipeline.
+# See packages/pipeline/README.md for how to regenerate.
+data/raw/
+data/tiles/
+*.osm.pbf
+*.pmtiles
+
+# Environment
+.env
+.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test/bench artifacts
+coverage/
+bench-results/

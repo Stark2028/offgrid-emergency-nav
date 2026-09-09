@@ -1,0 +1,7 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+# esbuild ships a platform-native binary that its postinstall script unpacks;
+# vitest needs it. Trusted dependency, approved deliberately.
+allowBuilds:
+  esbuild: true

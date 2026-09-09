@@ -1,0 +1,17 @@
+{
+  "name": "offgrid",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline-first emergency navigation PWA with peer-to-peer hazard sharing",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm --filter @offgrid/web dev"
+  }
+}
