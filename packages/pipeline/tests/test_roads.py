@@ -121,11 +121,21 @@ class TestRoutability:
 
     @pytest.mark.parametrize("access", ["no", "private", "customers", "delivery"])
     def test_blocked_access_excludes_a_way(self, access: str) -> None:
-        assert not is_routable({"highway": "service", "access": access})
+        assert not is_routable({"highway": "residential", "access": access})
 
     def test_motor_vehicle_permission_overrides_blanket_access_ban(self) -> None:
-        tags = {"highway": "service", "access": "private", "motor_vehicle": "yes"}
+        tags = {"highway": "residential", "access": "private", "motor_vehicle": "yes"}
         assert is_routable(tags)
+
+    def test_service_roads_are_excluded(self) -> None:
+        # Parking aisles, driveways and alleys: 13.2% of Delhi's routable ways,
+        # but you route *through* a city in an emergency, not into a parking
+        # bay. Each one adds junctions, so keeping them cost ~20% of tile size.
+        assert not is_routable({"highway": "service"})
+
+    def test_living_streets_are_kept(self) -> None:
+        # Unlike service roads, these are real through-routes in Delhi.
+        assert is_routable({"highway": "living_street"})
 
     def test_motor_vehicle_ban_excludes_a_way(self) -> None:
         assert not is_routable({"highway": "residential", "motor_vehicle": "no"})

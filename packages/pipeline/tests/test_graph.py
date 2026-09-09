@@ -203,6 +203,29 @@ class TestSimplification:
         assert dijkstra(builder.edges, 1, 4) == forward_before
         assert dijkstra(builder.edges, 4, 1) == backward_before
 
+    def test_two_way_chain_actually_collapses(self) -> None:
+        """Regression: two-way through-nodes were surviving simplification.
+
+        A chain walk arriving at a two-way through-node sees two outgoing
+        edges — onward, and back the way it came. The 'exactly one candidate'
+        check therefore failed and the walk stopped immediately, so nothing
+        collapsed. Most of a road network is two-way, so on real Delhi data
+        this removed only 11% of nodes instead of ~53%, and produced 64 MB of
+        tiles instead of ~15 MB.
+
+        Cost-preservation tests did not catch it: a graph that fails to
+        simplify still has exactly the right costs.
+        """
+        builder = GraphBuilder()
+        refs, coords = straight_way(5)
+        builder.add_way({"highway": "residential"}, refs, coords)
+        builder.simplify()
+
+        assert set(builder.nodes) == {1, 5}, "interior two-way nodes must collapse"
+        assert len(builder.edges) == 2, "one edge per direction"
+        # The interior nodes survive as drawable geometry.
+        assert all(len(edge.shape) == 3 for edge in builder.edges)
+
     def test_does_not_merge_across_a_direction_change(self) -> None:
         # A two-way segment feeding a one-way segment: collapsing them would
         # invent a two-way road where the second half is one-way.

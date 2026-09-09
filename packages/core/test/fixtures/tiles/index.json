@@ -1,0 +1,227 @@
+{
+ "single-cell": {
+  "files": [
+   "single-cell.ttnfsw.bin"
+  ],
+  "cells": [
+   "ttnfsw"
+  ],
+  "nodes": {
+   "1": {
+    "lat": 28.6,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "4": {
+    "lat": 28.6006,
+    "lon": 77.2003,
+    "component": 0,
+    "cell": "ttnfsw"
+   }
+  },
+  "edges": [
+   {
+    "source": 1,
+    "target": 4,
+    "weight": 1050
+   },
+   {
+    "source": 4,
+    "target": 1,
+    "weight": 1050
+   }
+  ]
+ },
+ "junction": {
+  "files": [
+   "junction.ttnfsw.bin",
+   "junction.ttnfsy.bin"
+  ],
+  "cells": [
+   "ttnfsw",
+   "ttnfsy"
+  ],
+  "nodes": {
+   "1": {
+    "lat": 28.6,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "2": {
+    "lat": 28.6005,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "3": {
+    "lat": 28.601,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "4": {
+    "lat": 28.6005,
+    "lon": 77.201,
+    "component": 0,
+    "cell": "ttnfsy"
+   }
+  },
+  "edges": [
+   {
+    "source": 1,
+    "target": 2,
+    "weight": 364
+   },
+   {
+    "source": 2,
+    "target": 1,
+    "weight": 364
+   },
+   {
+    "source": 2,
+    "target": 3,
+    "weight": 364
+   },
+   {
+    "source": 2,
+    "target": 4,
+    "weight": 1406
+   },
+   {
+    "source": 3,
+    "target": 2,
+    "weight": 364
+   },
+   {
+    "source": 4,
+    "target": 2,
+    "weight": 1406
+   }
+  ]
+ },
+ "oneway": {
+  "files": [
+   "oneway.ttnfsw.bin"
+  ],
+  "cells": [
+   "ttnfsw"
+  ],
+  "nodes": {
+   "1": {
+    "lat": 28.6,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "3": {
+    "lat": 28.6006,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   }
+  },
+  "edges": [
+   {
+    "source": 1,
+    "target": 3,
+    "weight": 438
+   }
+  ]
+ },
+ "crossing": {
+  "files": [
+   "crossing.ttnfsw.bin",
+   "crossing.ttnftw.bin"
+  ],
+  "cells": [
+   "ttnfsw",
+   "ttnftw"
+  ],
+  "nodes": {
+   "1": {
+    "lat": 28.6,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "2": {
+    "lat": 28.6,
+    "lon": 77.24,
+    "component": 0,
+    "cell": "ttnftw"
+   }
+  },
+  "edges": [
+   {
+    "source": 1,
+    "target": 2,
+    "weight": 25561
+   },
+   {
+    "source": 2,
+    "target": 1,
+    "weight": 25561
+   }
+  ]
+ },
+ "disconnected": {
+  "files": [
+   "disconnected.ttnfsw.bin",
+   "disconnected.ttnfsy.bin"
+  ],
+  "cells": [
+   "ttnfsw",
+   "ttnfsy"
+  ],
+  "nodes": {
+   "1": {
+    "lat": 28.6,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "3": {
+    "lat": 28.6004,
+    "lon": 77.2,
+    "component": 0,
+    "cell": "ttnfsw"
+   },
+   "10": {
+    "lat": 28.602,
+    "lon": 77.202,
+    "component": 1,
+    "cell": "ttnfsy"
+   },
+   "11": {
+    "lat": 28.6022,
+    "lon": 77.202,
+    "component": 1,
+    "cell": "ttnfsy"
+   }
+  },
+  "edges": [
+   {
+    "source": 1,
+    "target": 3,
+    "weight": 642
+   },
+   {
+    "source": 3,
+    "target": 1,
+    "weight": 642
+   },
+   {
+    "source": 10,
+    "target": 11,
+    "weight": 321
+   },
+   {
+    "source": 11,
+    "target": 10,
+    "weight": 321
+   }
+  ]
+ }
+}

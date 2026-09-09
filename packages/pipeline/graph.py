@@ -247,11 +247,18 @@ class GraphBuilder:
         metres = first.metres
         shape: list[tuple[float, float]] = list(first.shape)
         current = first.target
+        previous = first.source
         guard = 0
 
         while current not in keep:
-            # Degree-2 by construction, so there is exactly one way onward.
-            candidates = [e for e in outgoing.get(current, []) if id(e) not in walked]
+            # A through-node on a two-way street has two outgoing edges: onward,
+            # and back the way we came. Excluding the one that returns to the
+            # previous node leaves exactly the continuation.
+            candidates = [
+                e
+                for e in outgoing.get(current, [])
+                if id(e) not in walked and e.target != previous
+            ]
             if len(candidates) != 1:
                 break
 
@@ -263,6 +270,7 @@ class GraphBuilder:
             weight += nxt.weight
             metres += nxt.metres
             shape.extend(nxt.shape)
+            previous = current
             current = nxt.target
 
             guard += 1
