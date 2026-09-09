@@ -1,0 +1,15 @@
+# Normalise to LF in the repository; Git checks out native line endings locally.
+* text=auto eol=lf
+
+# Binary assets — never touch these.
+*.pbf binary
+*.pmtiles binary
+*.osm.pbf binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.woff binary
+*.woff2 binary
+
+# Generated — collapse in diffs and exclude from language stats.
+pnpm-lock.yaml linguist-generated=true -diff
