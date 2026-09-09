@@ -1,0 +1,17 @@
+# Build-time only. Nothing here ships to the browser.
+
+# PyOsmium — Python bindings for libosmium, the reference OSM toolkit.
+#
+# Chosen over pyrosm for three reasons: it streams nodes and ways directly
+# (we want a routable graph, not GeoDataFrames we'd immediately tear apart),
+# streaming keeps memory constant regardless of extract size, and it ships
+# prebuilt wheels. pyrosm depends on cykhash, which has no Python 3.12 wheel
+# for Windows and needs a C++ compiler to build.
+osmium>=4.3.1
+
+numpy>=1.26.0
+
+# Geohash encoding is implemented in geohash.py rather than taken from PyPI:
+# it is ~30 lines, and writing it ourselves guarantees the Python encoder and
+# the TypeScript one agree bit-for-bit. Tile keys cross that boundary, so a
+# subtle disagreement would mean silently unreachable tiles.
