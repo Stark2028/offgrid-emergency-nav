@@ -35,54 +35,75 @@ DEFAULT_INPUT = REPO_ROOT / "data" / "raw" / "northern-zone.osm.pbf"
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "raw" / "delhi-roads.osm.pbf"
 
 
-def collect_ids(
-    path: Path, bbox: tuple[float, float, float, float]
-) -> tuple[set[int], set[int]]:
-    """Return (way_ids, node_ids) for routable ways intersecting the bbox.
+def nodes_in_bbox(path: Path, bbox: tuple[float, float, float, float]) -> set[int]:
+    """Ids of every node inside the bounding box.
 
-    A way is kept if *any* of its nodes falls inside the box, so roads that
-    cross the boundary stay whole rather than being clipped into dead ends.
-    Requires node locations, so this pass runs with a location cache.
+    Deliberately avoids osmium's location cache. The cache resolves way-node
+    coordinates, but it has to index all ~20M nodes in the extract to do it,
+    which costs minutes and ~650 MB. Recording which node *ids* fall in the box
+    answers the same question — "does this way touch Delhi?" — from the node
+    pass we are making anyway.
     """
     west, south, east, north = bbox
+    inside: set[int] = set()
+
+    started = time.time()
+    scanned = 0
+
+    for node in osmium.FileProcessor(str(path), osmium.osm.NODE):
+        scanned += 1
+        if scanned % 5_000_000 == 0:
+            print(f"  ...{scanned:,} nodes, {time.time() - started:.0f}s", flush=True)
+
+        location = node.location
+        if not location.valid():
+            continue
+        if west <= location.lon <= east and south <= location.lat <= north:
+            inside.add(node.id)
+
+    print(
+        f"  pass 1: {scanned:,} nodes scanned in {time.time() - started:.0f}s "
+        f"-> {len(inside):,} inside the bbox"
+    )
+    return inside
+
+
+def collect_ids(
+    path: Path, bbox_nodes: set[int]
+) -> tuple[set[int], set[int]]:
+    """Return (way_ids, node_ids) for routable ways touching the bbox.
+
+    A way is kept if *any* of its nodes is inside, so roads crossing the
+    boundary stay whole rather than being clipped into dead ends. All of a kept
+    way's nodes are collected, including those outside the box.
+    """
     way_ids: set[int] = set()
     node_ids: set[int] = set()
 
     started = time.time()
     scanned = 0
 
-    # KeyFilter drops non-highway objects inside libosmium, before they cross
-    # into Python — that is where most of the full-extract scan time goes.
-    processor = (
-        osmium.FileProcessor(str(path), osmium.osm.WAY)
-        .with_locations("flex_mem")
-        .with_filter(osmium.filter.KeyFilter("highway"))
+    # KeyFilter drops non-highway ways inside libosmium, before they cross into
+    # Python — that is where most of the scan time would otherwise go.
+    processor = osmium.FileProcessor(str(path), osmium.osm.WAY).with_filter(
+        osmium.filter.KeyFilter("highway")
     )
 
     for way in processor:
         scanned += 1
-        if scanned % 200_000 == 0:
+        if scanned % 500_000 == 0:
             print(f"  ...{scanned:,} highway ways, {time.time() - started:.0f}s", flush=True)
 
         if not is_routable(dict(way.tags)):
             continue
 
-        nodes = way.nodes
-        inside = False
-        for node in nodes:
-            if not node.location.valid():
-                continue
-            if west <= node.location.lon <= east and south <= node.location.lat <= north:
-                inside = True
-                break
-
-        if inside:
+        refs = [node.ref for node in way.nodes]
+        if any(ref in bbox_nodes for ref in refs):
             way_ids.add(way.id)
-            for node in nodes:
-                node_ids.add(node.ref)
+            node_ids.update(refs)
 
     print(
-        f"  pass 1: {scanned:,} highway ways scanned in {time.time() - started:.0f}s "
+        f"  pass 2: {scanned:,} highway ways scanned in {time.time() - started:.0f}s "
         f"-> {len(way_ids):,} routable ways, {len(node_ids):,} nodes"
     )
     return way_ids, node_ids
@@ -114,7 +135,7 @@ def write_subset(
 
     size_mb = dest.stat().st_size / 1_000_000
     print(
-        f"  pass 2: wrote {written_nodes:,} nodes + {written_ways:,} ways "
+        f"  pass 3: wrote {written_nodes:,} nodes + {written_ways:,} ways "
         f"({size_mb:.1f} MB) in {time.time() - started:.0f}s"
     )
 
@@ -141,7 +162,11 @@ def main() -> None:
     print(f"cropping {args.input.name} to bbox {tuple(args.bbox)}")
     started = time.time()
 
-    way_ids, node_ids = collect_ids(args.input, tuple(args.bbox))
+    bbox_nodes = nodes_in_bbox(args.input, tuple(args.bbox))
+    if not bbox_nodes:
+        raise SystemExit("no nodes found in the bounding box — is it correct?")
+
+    way_ids, node_ids = collect_ids(args.input, bbox_nodes)
     if not way_ids:
         raise SystemExit("no routable ways found in the bounding box — is it correct?")
 
