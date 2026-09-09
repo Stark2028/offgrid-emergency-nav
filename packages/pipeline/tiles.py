@@ -1,0 +1,262 @@
+"""Serialise the graph into geohash-6 binary tiles.
+
+The layout is documented in packages/core/src/graph/format.ts, which is the
+contract this module writes against.
+
+The hard part is tile boundaries. An edge whose endpoints fall in different
+cells has to be usable from either side without loading the other tile first,
+so:
+
+  * every node carries a **global id**, not a tile-local index — local indices
+    that need remapping on load are the main source of stitching bugs;
+  * a boundary edge is written into **both** tiles, costing a few percent of
+    size and removing a whole class of them;
+  * the far endpoint appears in the neighbouring tile as a **halo node**: real
+    coordinates (so the heuristic can be evaluated without loading the
+    neighbour) but no outgoing adjacency. Settling one during search is the
+    signal to load the owning tile and resume.
+"""
+
+from __future__ import annotations
+
+import struct
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+import geohash
+from graph import Edge, Node
+
+TILE_MAGIC = 0x4F475254  # "OGRT"
+TILE_VERSION = 1
+HEADER_BYTES = 64
+TILE_PRECISION = 6
+
+NODE_FLAG_HALO = 1 << 0
+NODE_FLAG_JUNCTION = 1 << 1
+
+
+@dataclass(slots=True)
+class TileStats:
+    geohash: str
+    nodes: int
+    halo_nodes: int
+    forward_edges: int
+    reverse_edges: int
+    bytes_written: int
+
+
+def pack_geohash(value: str) -> tuple[int, int]:
+    """Pack a 6-character geohash into two u32s for the fixed-size header."""
+    if len(value) != 6:
+        raise ValueError(f"expected geohash-6, got {len(value)}: {value!r}")
+    lo = value[0].encode()[0] | (value[1].encode()[0] << 8) | (value[2].encode()[0] << 16)
+    hi = value[3].encode()[0] | (value[4].encode()[0] << 8) | (value[5].encode()[0] << 16)
+    return lo, hi
+
+
+def assign_tiles(nodes: dict[int, Node]) -> dict[int, str]:
+    """Map each node to the geohash-6 cell that owns it."""
+    return {
+        node_id: geohash.encode(node.lat, node.lon, TILE_PRECISION)
+        for node_id, node in nodes.items()
+    }
+
+
+def build_tiles(
+    nodes: dict[int, Node],
+    edges: list[Edge],
+    components: dict[int, int],
+) -> dict[str, bytes]:
+    """Serialise the graph into one binary blob per geohash cell."""
+    owner = assign_tiles(nodes)
+
+    # Which nodes each tile must describe: the ones it owns, plus halo entries
+    # for the far end of every edge crossing its boundary.
+    members: dict[str, set[int]] = defaultdict(set)
+    for node_id, cell in owner.items():
+        members[cell].add(node_id)
+
+    # Boundary edges go into both tiles, so each side can traverse them without
+    # first loading the other.
+    tile_edges: dict[str, list[Edge]] = defaultdict(list)
+    for edge in edges:
+        source_cell = owner[edge.source]
+        target_cell = owner[edge.target]
+
+        tile_edges[source_cell].append(edge)
+        members[source_cell].add(edge.target)  # halo if owned elsewhere
+
+        if target_cell != source_cell:
+            tile_edges[target_cell].append(edge)
+            members[target_cell].add(edge.source)
+
+    return {
+        cell: _serialise_tile(cell, members[cell], tile_edges[cell], nodes, owner, components)
+        for cell in sorted(members)
+    }
+
+
+def _serialise_tile(
+    cell: str,
+    member_ids: set[int],
+    cell_edges: list[Edge],
+    nodes: dict[int, Node],
+    owner: dict[int, str],
+    components: dict[int, int],
+) -> bytes:
+    # Global ids ascending, so the runtime can binary-search the node table.
+    ordered = sorted(member_ids)
+    slot_of = {node_id: index for index, node_id in enumerate(ordered)}
+    node_count = len(ordered)
+
+    lat = bytearray()
+    lon = bytearray()
+    global_ids = bytearray()
+    component_ids = bytearray()
+    flags = bytearray()
+
+    for node_id in ordered:
+        node = nodes[node_id]
+        lat += struct.pack("<f", node.lat)
+        lon += struct.pack("<f", node.lon)
+        global_ids += struct.pack("<I", node_id & 0xFFFFFFFF)
+        component_ids += struct.pack("<H", min(components.get(node_id, 0), 0xFFFF))
+
+        flag = 0
+        if owner[node_id] != cell:
+            flag |= NODE_FLAG_HALO
+        if node.way_count > 1:
+            flag |= NODE_FLAG_JUNCTION
+        flags += struct.pack("<B", flag)
+
+    # Halo nodes get no outgoing adjacency: the tile that owns them describes
+    # their edges. Settling one tells the router to load that tile.
+    outgoing: dict[int, list[Edge]] = defaultdict(list)
+    incoming: dict[int, list[Edge]] = defaultdict(list)
+    for edge in cell_edges:
+        if owner[edge.source] == cell:
+            outgoing[edge.source].append(edge)
+        if owner[edge.target] == cell:
+            incoming[edge.target].append(edge)
+
+    geometry = bytearray()
+    fwd_offsets, fwd_targets, fwd_weights, fwd_geometry = _pack_adjacency(
+        ordered, outgoing, slot_of, geometry, reverse=False
+    )
+    rev_offsets, rev_targets, rev_weights, rev_geometry = _pack_adjacency(
+        ordered, incoming, slot_of, geometry, reverse=True
+    )
+
+    fwd_edge_count = len(fwd_targets) // 4
+    rev_edge_count = len(rev_targets) // 4
+
+    body = (
+        bytes(lat)
+        + bytes(lon)
+        + bytes(global_ids)
+        + bytes(component_ids)
+        + bytes(flags)
+    )
+    body += b"\x00" * (-len(body) % 4)  # realign before the u32 arrays
+
+    body += (
+        bytes(fwd_offsets)
+        + bytes(fwd_targets)
+        + bytes(fwd_weights)
+        + bytes(fwd_geometry)
+        + bytes(rev_offsets)
+        + bytes(rev_targets)
+        + bytes(rev_weights)
+        + bytes(rev_geometry)
+    )
+
+    geometry_offset = HEADER_BYTES + len(body)
+    min_lat, min_lon, max_lat, max_lon = geohash.bounds(cell)
+    lo, hi = pack_geohash(cell)
+
+    header = bytearray(HEADER_BYTES)
+    struct.pack_into("<I", header, 0, TILE_MAGIC)
+    struct.pack_into("<I", header, 4, TILE_VERSION)
+    struct.pack_into("<I", header, 8, node_count)
+    struct.pack_into("<I", header, 12, fwd_edge_count)
+    struct.pack_into("<I", header, 16, rev_edge_count)
+    struct.pack_into("<I", header, 20, lo)
+    struct.pack_into("<I", header, 24, hi)
+    struct.pack_into("<I", header, 28, geometry_offset)
+    struct.pack_into("<I", header, 32, len(geometry))
+    struct.pack_into("<f", header, 36, min_lat)
+    struct.pack_into("<f", header, 40, min_lon)
+    struct.pack_into("<f", header, 44, max_lat)
+    struct.pack_into("<f", header, 48, max_lon)
+
+    return bytes(header) + bytes(body) + bytes(geometry)
+
+
+def _pack_adjacency(
+    ordered: list[int],
+    adjacency: dict[int, list[Edge]],
+    slot_of: dict[int, int],
+    geometry: bytearray,
+    *,
+    reverse: bool,
+) -> tuple[bytearray, bytearray, bytearray, bytearray]:
+    """Pack one CSR adjacency (forward or reverse).
+
+    The reverse direction is materialised rather than derived at runtime: the
+    backward half of bidirectional A* must traverse edges pointing *into* a
+    node, and deriving that on the fly is where one-way bugs come from.
+    """
+    offsets = bytearray()
+    targets = bytearray()
+    weights = bytearray()
+    geometry_refs = bytearray()
+
+    cursor = 0
+    for node_id in ordered:
+        offsets += struct.pack("<I", cursor)
+        for edge in adjacency.get(node_id, []):
+            far = edge.source if reverse else edge.target
+            targets += struct.pack("<I", slot_of[far])
+            weights += struct.pack("<I", min(edge.weight, 0xFFFFFFFF))
+            geometry_refs += struct.pack("<I", _append_geometry(geometry, edge, reverse=reverse))
+            cursor += 1
+
+    offsets += struct.pack("<I", cursor)  # CSR sentinel
+    return offsets, targets, weights, geometry_refs
+
+
+def _append_geometry(geometry: bytearray, edge: Edge, *, reverse: bool) -> int:
+    """Append an edge's interior shape, returning its byte offset.
+
+    Stored as a u16 count followed by (lat, lon) float pairs. Reverse edges
+    store their shape reversed so a drawn route always runs source-to-target.
+    """
+    offset = len(geometry)
+    shape = list(reversed(edge.shape)) if reverse else edge.shape
+
+    geometry += struct.pack("<H", min(len(shape), 0xFFFF))
+    for point_lat, point_lon in shape[:0xFFFF]:
+        geometry += struct.pack("<ff", point_lat, point_lon)
+    return offset
+
+
+def write_tiles(tiles: dict[str, bytes], out_dir: Path) -> list[TileStats]:
+    """Write tiles to disk, one file per cell, and return per-tile stats."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    stats: list[TileStats] = []
+    for cell, blob in tiles.items():
+        path = out_dir / f"{cell}.bin"
+        path.write_bytes(blob)
+
+        node_count, fwd, rev = struct.unpack_from("<III", blob, 8)
+        flags_offset = HEADER_BYTES + node_count * (4 + 4 + 4 + 2)
+        halo = sum(
+            1
+            for index in range(node_count)
+            if blob[flags_offset + index] & NODE_FLAG_HALO
+        )
+        stats.append(TileStats(cell, node_count, halo, fwd, rev, len(blob)))
+
+    return stats
