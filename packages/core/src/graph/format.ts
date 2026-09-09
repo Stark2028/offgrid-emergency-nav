@@ -20,12 +20,18 @@
  * ├─ fwdOffset      Uint32  × (nodeCount + 1)
  * ├─ fwdTarget      Uint32  × fwdEdgeCount   local slot, or halo index
  * ├─ fwdWeight      Uint32  × fwdEdgeCount   centiseconds of travel time
- * ├─ fwdGeometry    Uint32  × fwdEdgeCount   byte offset into geometry blob
+ * ├─ fwdGeometry    Uint32  × fwdEdgeCount   tagged geometry ref, see below
  * ├─ revOffset      Uint32  × (nodeCount + 1)
  * ├─ revTarget      Uint32  × revEdgeCount
  * ├─ revWeight      Uint32  × revEdgeCount
  * ├─ revGeometry    Uint32  × revEdgeCount
- * └─ geometry       packed polylines (see decodeGeometry)
+ * └─ geometry       packed polylines (u16 count, then lat/lon Float32 pairs)
+ *
+ * A two-way road's forward and reverse edges describe the same physical shape,
+ * just walked in opposite directions. Storing both copies doubled the geometry
+ * blob — 40% of tile size, half of it redundant — so a geometry reference is
+ * tagged: the low 31 bits are the byte offset, and GEOMETRY_REVERSED says to
+ * read the points back-to-front. Both directions then share one copy.
  */
 
 export const TILE_MAGIC = 0x4f47_5254; // "OGRT" — OffGrid Route Tile
@@ -59,6 +65,17 @@ export const NODE_FLAG_HALO = 1 << 0;
 
 /** Node was kept through simplification because it is a real intersection. */
 export const NODE_FLAG_JUNCTION = 1 << 1;
+
+/**
+ * High bit of a geometry reference: read the stored polyline back-to-front.
+ *
+ * Lets a two-way road's forward and reverse edges share one copy of the shape
+ * instead of storing it twice.
+ */
+export const GEOMETRY_REVERSED = 0x8000_0000;
+
+/** Byte offset carried by a geometry reference, once the tag is stripped. */
+export const GEOMETRY_OFFSET_MASK = 0x7fff_ffff;
 
 /**
  * Edge weights are integers — centiseconds of travel time.

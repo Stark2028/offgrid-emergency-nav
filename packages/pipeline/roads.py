@@ -24,6 +24,12 @@ MAX_SPEED_KPH: Final = 120.0
 # for movement through a city under stress, and pedestrians can use the drivable
 # network anyway. A pedestrian-only layer can be added later behind an edge flag.
 #
+# Also excludes highway=service — parking aisles, driveways and alleys behind
+# buildings. They are 13.2% of Delhi's routable ways but carry almost no value
+# for moving *through* a city, and each one adds junctions to the graph. Keeping
+# them cost ~20% of tile size for routes nobody needs in an emergency.
+# living_street stays: in Delhi those are real through-routes.
+#
 # Speeds are free-flow design speeds in km/h. They are deliberately optimistic:
 # the heuristic needs an upper bound on speed, and real congestion only ever
 # makes an edge slower, which keeps estimates admissible.
@@ -41,7 +47,6 @@ HIGHWAY_SPEEDS: Final[dict[str, float]] = {
     "unclassified": 30.0,
     "residential": 25.0,
     "living_street": 12.0,
-    "service": 15.0,
     "road": 25.0,  # explicitly unclassified by the mapper
 }
 

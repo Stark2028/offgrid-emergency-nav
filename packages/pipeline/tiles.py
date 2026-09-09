@@ -35,6 +35,12 @@ TILE_PRECISION = 6
 NODE_FLAG_HALO = 1 << 0
 NODE_FLAG_JUNCTION = 1 << 1
 
+# High bit of a geometry reference: read the stored polyline back-to-front.
+# A two-way road's forward and reverse edges describe the same physical shape,
+# so they share one copy rather than storing it twice.
+GEOMETRY_REVERSED = 0x80000000
+GEOMETRY_OFFSET_MASK = 0x7FFFFFFF
+
 
 @dataclass(slots=True)
 class TileStats:
@@ -140,12 +146,17 @@ def _serialise_tile(
         if owner[edge.target] == cell:
             incoming[edge.target].append(edge)
 
+    # Shapes are interned by the unordered node pair, so a two-way road's two
+    # Edge objects — which are distinct objects carrying mirrored shapes — share
+    # one stored copy and differ only in their direction tag.
     geometry = bytearray()
+    shape_offsets: dict[tuple[int, int], int] = {}
+
     fwd_offsets, fwd_targets, fwd_weights, fwd_geometry = _pack_adjacency(
-        ordered, outgoing, slot_of, geometry, reverse=False
+        ordered, outgoing, slot_of, geometry, shape_offsets, reverse=False
     )
     rev_offsets, rev_targets, rev_weights, rev_geometry = _pack_adjacency(
-        ordered, incoming, slot_of, geometry, reverse=True
+        ordered, incoming, slot_of, geometry, shape_offsets, reverse=True
     )
 
     fwd_edge_count = len(fwd_targets) // 4
@@ -198,6 +209,7 @@ def _pack_adjacency(
     adjacency: dict[int, list[Edge]],
     slot_of: dict[int, int],
     geometry: bytearray,
+    shape_offsets: dict[tuple[int, int], int],
     *,
     reverse: bool,
 ) -> tuple[bytearray, bytearray, bytearray, bytearray]:
@@ -219,26 +231,55 @@ def _pack_adjacency(
             far = edge.source if reverse else edge.target
             targets += struct.pack("<I", slot_of[far])
             weights += struct.pack("<I", min(edge.weight, 0xFFFFFFFF))
-            geometry_refs += struct.pack("<I", _append_geometry(geometry, edge, reverse=reverse))
+            geometry_refs += struct.pack(
+                "<I", _geometry_ref(geometry, shape_offsets, edge, reverse=reverse)
+            )
             cursor += 1
 
     offsets += struct.pack("<I", cursor)  # CSR sentinel
     return offsets, targets, weights, geometry_refs
 
 
-def _append_geometry(geometry: bytearray, edge: Edge, *, reverse: bool) -> int:
-    """Append an edge's interior shape, returning its byte offset.
+def _geometry_ref(
+    geometry: bytearray,
+    shape_offsets: dict[tuple[int, int], int],
+    edge: Edge,
+    *,
+    reverse: bool,
+) -> int:
+    """Reference to an edge's interior shape, appending it if new.
 
-    Stored as a u16 count followed by (lat, lon) float pairs. Reverse edges
-    store their shape reversed so a drawn route always runs source-to-target.
+    Stored once as a u16 count followed by (lat, lon) float pairs. The high bit
+    of the reference says to read the points back-to-front, so a two-way road's
+    two edges share one copy — the shape is the same physical road either way.
+    Storing both cost 40% of tile size, half of it redundant.
+
+    Interning is keyed on the unordered node pair rather than object identity:
+    GraphBuilder creates a separate Edge for each direction, so identity never
+    matches. The stored copy is always oriented low-id to high-id, and any edge
+    running the other way carries the reversed tag — which is independent of
+    whether this is the forward or reverse CSR.
     """
-    offset = len(geometry)
-    shape = list(reversed(edge.shape)) if reverse else edge.shape
+    key = (min(edge.source, edge.target), max(edge.source, edge.target))
+    stored_forward = edge.source <= edge.target
 
-    geometry += struct.pack("<H", min(len(shape), 0xFFFF))
-    for point_lat, point_lon in shape[:0xFFFF]:
-        geometry += struct.pack("<ff", point_lat, point_lon)
-    return offset
+    offset = shape_offsets.get(key)
+    if offset is None:
+        offset = len(geometry)
+        shape_offsets[key] = offset
+
+        # Orient the stored copy low-id to high-id, whichever edge got here first.
+        shape = edge.shape if stored_forward else list(reversed(edge.shape))
+        shape = shape[:0xFFFF]
+        geometry += struct.pack("<H", len(shape))
+        for point_lat, point_lon in shape:
+            geometry += struct.pack("<ff", point_lat, point_lon)
+
+    # `reverse` says which CSR this entry belongs to; the geometry tag has to
+    # describe travel direction along the stored shape instead. In the reverse
+    # CSR the edge is traversed target-to-source, flipping that direction.
+    travels_forward = stored_forward if not reverse else not stored_forward
+    return offset if travels_forward else offset | GEOMETRY_REVERSED
 
 
 def write_tiles(tiles: dict[str, bytes], out_dir: Path) -> list[TileStats]:
