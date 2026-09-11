@@ -2,7 +2,9 @@
 
 End-to-end plan, from scaffold to deployed product. Reflects the state of the repo, not the original proposal — several items changed once real data and real browser constraints got involved.
 
-**Status:** Week 1 complete. 165 tests passing (47 TypeScript, 118 Python). 7 commits.
+**Status:** Phase 1 complete, Phase 2 mostly complete. **203 of 206 tests passing** (85/88 TypeScript, 118/118 Python). The 3 failures are all BUG-001 — see [ENGINEERING_LOG.md](ENGINEERING_LOG.md).
+
+> **Continuing this work (human or AI)?** Read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) first. It records which fixes were wrong and why, so the same dead ends are not re-explored.
 
 Legend: `[x]` done · `[ ]` not started · `[~]` partially done
 
@@ -83,16 +85,18 @@ Two questions that can kill the project. Answer before building on top of them.
 
 The phase where correctness is actually proven. Nothing downstream matters if this is wrong.
 
-- [ ] `dijkstra-reference.ts` — deliberately simple, no optimisations. The oracle.
-- [ ] `bidirectional-astar.ts`
-  - [ ] **Balanced potentials** — `p_f(v) = (h_f(v) − h_b(v))/2`, `p_b(v) = −p_f(v)`. Two independent heuristics optimise inconsistent objectives and break the termination bound
-  - [ ] **μ-bound termination** — track best-so-far `μ`; stop when `topF + topB ≥ μ`. "Frontiers met" is wrong and returns suboptimal paths
-  - [ ] Backward search over the reverse CSR
-  - [ ] O(1) unreachability via component ids
-  - [ ] Halo-node suspend/resume for demand-driven tile loading
-- [ ] **10,000-pair fuzz harness** asserting bidirectional A\* cost == Dijkstra cost exactly (compare costs, not paths — ties make paths non-unique)
+- [x] `dijkstra-reference.ts` — deliberately simple, no optimisations. The oracle. Also `dijkstraFrom` for multi-target
+- [x] `bidirectional-astar.ts`
+  - [x] **Balanced potentials** — `p_f(v) = (h_f(v) − h_b(v))/2`, `p_b(v) = −p_f(v)`
+  - [x] **μ-bound termination** — stop when `topF + topB ≥ μ`
+  - [x] Backward search over the reverse CSR
+  - [x] O(1) unreachability via component ids
+  - [ ] Halo-node suspend/resume for demand-driven tile loading — currently reports `missing` cells for the caller to load and retry, rather than suspending mid-search
+- [x] Adversarial fixture suite — 6 graphs (grid, detour, asymmetric, ladder, bottleneck, escape) with expected costs from an *independent* Dijkstra. **47 tests, all green**
+- [~] **Scale fuzz harness** — 2,000 random pairs over real Delhi tiles, diffed against the oracle. **3 failures: BUG-001**
+- [x] `packages/core/src/index.ts` — the barrel `package.json` already pointed at
 - [ ] Corridor prefetch — load cells intersecting the source→target corridor before searching
-- [ ] **`escape.ts` — multi-target search.** "Get me out" routes to the *nearest safe exit*, not a named destination: one Dijkstra seeded with every safe node at cost 0, run over the reverse graph. Same engine, inverted objective
+- [~] **Multi-target search for "get me out".** `dijkstraFrom` seeds every safe node at cost 0 over the reverse graph, so each node learns its cost to the *nearest* exit in one sweep. Tested (4 tests) against the `escape` fixture. Still needs: a bidirectional/A\* variant for speed, and real safe-exit data from the pipeline
 - [ ] Path reconstruction: node sequence → polyline with interior geometry
 - [ ] Benchmarks on real Delhi data — route time, tile-load latency, nodes expanded, memory
   *Every performance number in the README must be measured, not asserted*
@@ -205,7 +209,7 @@ The same codebase ships twice. Not a compromise — two genuinely different prod
 
 | Item | Status |
 |---|---|
-| `packages/core/src/index.ts` missing | `main` points at a nonexistent file — fix before `apps/web` imports core |
+| **BUG-001: router emits unresolvable node ids** | 3 scale tests fail. Paths contain steps with no edge behind them, cost lower than the oracle. Only reproduces on real tiles. See [ENGINEERING_LOG.md](ENGINEERING_LOG.md) |
 | `apps/web` is an empty stub | No `package.json`; workspace resolves 2 projects, not 3 |
 | Turn restrictions ignored | Routes may suggest illegal turns |
 | Tile compression | 28.5 MB uncompressed; gzip/brotli would likely halve it. Deferred until real-device storage testing |

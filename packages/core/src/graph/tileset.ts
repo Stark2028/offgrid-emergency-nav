@@ -94,7 +94,12 @@ export class TileSet {
   resolve(globalId: number): NodeRef | undefined {
     const owner = this.owners.get(globalId);
     if (owner) {
-      return { tile: owner, slot: owner.findSlot(globalId), halo: false };
+      const slot = owner.findSlot(globalId);
+      // The owners map and the tile's own id array must agree. If they do not,
+      // the tile is not what the index claims -- fall through to the halo scan
+      // rather than returning slot -1, which indexes arrays as undefined and
+      // launders a missing node past every `!` assertion downstream.
+      if (slot >= 0) return { tile: owner, slot, halo: false };
     }
 
     for (const tile of this.tiles.values()) {
@@ -140,7 +145,8 @@ export class TileSet {
    */
   component(globalId: number): number {
     const ref = this.resolve(globalId);
-    return ref ? ref.tile.components[ref.slot]! : -1;
+    if (!ref) return -1;
+    return ref.tile.components[ref.slot] ?? -1;
   }
 
   /**

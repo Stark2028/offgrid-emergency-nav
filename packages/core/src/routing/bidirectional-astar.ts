@@ -44,10 +44,13 @@ export interface RouteResult {
   /** Nodes settled across both searches — the measure of search effort. */
   readonly settled: number;
   /**
-   * Tiles the search needed but could not reach, if it stopped early.
+   * Cells the search reached the edge of but could not enter.
    *
-   * Empty on a complete search. Non-empty means the caller should load these
-   * and run again — see `unresolved` in TileSet.
+   * Non-empty does **not** mean the route is wrong: a search often touches a
+   * boundary into territory it had no reason to explore. It means a better
+   * route might exist through those cells — load them and run again to be sure.
+   *
+   * When no route was found at all, `cost` is Infinity and `path` is empty.
    */
   readonly missing: readonly string[];
 }
@@ -195,6 +198,15 @@ export function route(
   let meetingIndex = -1;
   let settledCount = 0;
 
+  /**
+   * When the best join was found mid-relaxation, the meeting node's parent link
+   * in that tree may describe a different (cheaper) route than the one `mu`
+   * measures. These record the true predecessor for that join so the path can
+   * be stitched from the same route the cost came from.
+   */
+  let meetingSide: SearchState | undefined;
+  let meetingPredecessor = NO_PARENT;
+
   const expand = (
     state: SearchState,
     other: SearchState,
@@ -229,23 +241,38 @@ export function route(
         state.heap.push(neighbourIndex, toKey(candidate, edge.target));
       }
 
-      // If the other search has already settled this node, the two halves join
-      // into a complete path. Keep the best such join seen so far.
+      // Join through this neighbour if the opposite search has already settled
+      // it. This check cannot be dropped in favour of only joining at settled
+      // nodes: the optimal path's meeting point is often discovered *here* and
+      // never popped by both sides before the termination bound fires.
+      //
+      // The subtlety is that `candidate` is tentative -- if the relaxation
+      // guard above failed, `parent[neighbourIndex]` still points along an
+      // earlier, cheaper route that does not cost `candidate`. Pairing that
+      // cost with that parent chain is what produced routes cheaper than the
+      // true optimum containing a step with no edge behind it. So record the
+      // predecessor that belongs to *this* join explicitly, and let joinPaths
+      // use it instead of trusting the tree link.
       if (other.settled[neighbourIndex]) {
         const total = candidate + other.distance[neighbourIndex]!;
         if (total < mu) {
           mu = total;
           meetingIndex = neighbourIndex;
+          meetingSide = state;
+          meetingPredecessor = currentIndex;
         }
       }
     }
 
-    // The node just settled may itself be the join point.
+    // The node just settled may itself be the join point, in which case its own
+    // committed parent chain is correct and no override is needed.
     if (other.settled[currentIndex]) {
       const total = currentDistance + other.distance[currentIndex]!;
       if (total < mu) {
         mu = total;
         meetingIndex = currentIndex;
+        meetingSide = undefined;
+        meetingPredecessor = NO_PARENT;
       }
     }
 
@@ -271,18 +298,37 @@ export function route(
     }
   }
 
-  if (meetingIndex < 0 || !Number.isFinite(mu)) {
-    return missing.size > 0
-      ? { cost: 0, path: [], settled: settledCount, missing: [...missing] }
-      : undefined;
+  // A search can touch halo nodes pointing into unloaded tiles and *still* find
+  // a complete path — the missing tiles simply held routes it did not need.
+  // So `missing` is reported as advice, never as a reason to discard a result.
+  if (meetingIndex >= 0 && Number.isFinite(mu)) {
+    return {
+      cost: mu,
+      path: joinPaths(
+        forward,
+        backward,
+        globalId,
+        meetingIndex,
+        meetingSide,
+        meetingPredecessor,
+      ),
+      settled: settledCount,
+      missing: [...missing],
+    };
   }
 
-  return {
-    cost: mu,
-    path: joinPaths(forward, backward, globalId, meetingIndex),
-    settled: settledCount,
-    missing: [...missing],
-  };
+  // No path found. If tiles were wanted, say so: the caller can load them and
+  // retry. Returning a zero-cost empty route here would read as free travel.
+  if (missing.size > 0) {
+    return {
+      cost: Number.POSITIVE_INFINITY,
+      path: [],
+      settled: settledCount,
+      missing: [...missing],
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -297,16 +343,32 @@ function joinPaths(
   backward: SearchState,
   globalId: readonly number[],
   meetingIndex: number,
+  meetingSide?: SearchState,
+  meetingPredecessor: number = NO_PARENT,
 ): number[] {
+  // A mid-relaxation join reached the meeting node from `meetingPredecessor`,
+  // which is not necessarily what the tree link says. Walk that side's chain
+  // from the predecessor instead, so the stitched path matches the cost in mu.
+  const parentOf = (state: SearchState, index: number): number =>
+    state === meetingSide && index === meetingIndex ? meetingPredecessor : state.parent[index]!;
+
+  // Forward tree: parent[v] is the node before v on the way from the source,
+  // so walking parents from the meeting node and reversing gives
+  // source -> ... -> meeting.
   const head: number[] = [];
-  for (let index = meetingIndex; index !== NO_PARENT; index = forward.parent[index]!) {
+  for (let index = meetingIndex; index !== NO_PARENT; index = parentOf(forward, index)) {
     head.push(globalId[index]!);
   }
   head.reverse();
 
+  // Backward tree: built by exploring reverse edges out of the target, so
+  // parent[v] is the node *after* v on the way to the target. Walking parents
+  // from the meeting node therefore already runs meeting -> ... -> target, and
+  // each consecutive pair is a forward-traversable edge. The meeting node is
+  // already in `head`, so start from its parent.
   const tail: number[] = [];
   for (
-    let index = backward.parent[meetingIndex]!;
+    let index = parentOf(backward, meetingIndex);
     index !== NO_PARENT;
     index = backward.parent[index]!
   ) {

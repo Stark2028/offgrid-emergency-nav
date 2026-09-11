@@ -6,7 +6,9 @@ During internet blackouts, natural disasters, or mass protests, cellular network
 
 OffGrid computes routes entirely on-device from a local road graph, and shares hazard reports between nearby devices with no infrastructure at all.
 
-> **Status: in development.** Week 1 of a 6-week build. The graph and routing core is being built first, verified against a reference implementation, before any UI exists.
+> **Status: in development.** The graph and routing core is built first and verified against a reference implementation, before any UI exists. 203 of 206 tests pass; the 3 failures are a known open bug in path reconstruction at scale.
+>
+> Contributors — including AI assistants — should read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before touching routing, the tile format, or the mesh design. It records the decisions that must not be silently reversed and the fixes that were tried and were wrong.
 
 ---
 
@@ -15,7 +17,7 @@ OffGrid computes routes entirely on-device from a local road graph, and shares h
 | | |
 |---|---|
 | **Routing** | Bidirectional A\* over a CSR-encoded road graph in flat typed arrays, running in a Web Worker |
-| **Map data** | Real OpenStreetMap data for Delhi NCT — ~61k nodes / ~209k edges after topological simplification, ~15 MB of binary tiles |
+| **Map data** | Real OpenStreetMap data for Delhi — **246,466 nodes / 658,533 edges** across 3,463 tiles, 28.5 MB (measured, not estimated) |
 | **Storage** | Geohash-6 tiles in IndexedDB; the ~9 tiles around your GPS fix load in ~60 KB so the first paint is instant |
 | **Basemap** | Protomaps PMTiles, self-hosted glyphs and sprites, rendered offline by MapLibre |
 | **Hazards** | Ed25519-signed reports with graduated trust, shared peer-to-peer |
@@ -33,7 +35,7 @@ A few decisions that go against the obvious approach, and why.
 
 **Sorted ID lists, not Bloom filters, for peer reconciliation.** At a few hundred hazards the complete ID list is ~8 KB. A Bloom false positive means a peer wrongly believes you already have a hazard and never sends it — silent, unrecoverable data loss, degrading worst under emergency load. Exact reconciliation is simpler and cheaper than the failure mode it avoids.
 
-**Peer-to-peer is QR-first.** Browsers are BLE *central*-only and cannot advertise as peripherals, so a PWA cannot form a true BLE mesh. WebRTC-over-LAN needs shared Wi-Fi, which public networks often break with AP isolation and which usually doesn't exist during a blackout. QR bundle exchange — display a signed hazard bundle, scan it on another phone — needs no network, no pairing, and no radio, so it works exactly where the alternatives fail. The transport layer is an interface; native BLE drops in later without touching the mesh logic.
+**Peer-to-peer is BLE-first, which means it cannot be a pure PWA.** Browsers are BLE *central*-only and cannot advertise as peripherals, so a web app cannot form a mesh — no API, on any engine. Every app that actually worked in a protest (Bridgefy, Briar, Bitchat) is native with automatic advertise-and-scan, because that is the only model that survives a moving crowd: two phones in pockets sync with zero interaction. QR exchange is kept, but honestly scoped — a prepared group syncing *before* trouble, not strangers swapping codes under tear gas. WebRTC-over-LAN is opportunistic only; public Wi-Fi routinely blocks the multicast that local ICE candidates depend on. The transport layer is an interface, so the same codebase ships as a web build (routing, no mesh) and an Android build (everything).
 
 ## Repository layout
 
@@ -41,7 +43,7 @@ A few decisions that go against the obvious approach, and why.
 packages/core/       Graph, routing, mesh, crypto. Pure TypeScript, zero DOM
                      dependencies — runs and tests in Node. Correctness lives here.
 packages/pipeline/   Python. OpenStreetMap PBF -> binary geohash tiles. Build-time only.
-apps/web/            React + TypeScript + Vite PWA.
+apps/web/            React + TypeScript + Vite. Not started yet — empty stub.
 ```
 
 ## Development
@@ -54,7 +56,12 @@ pnpm test          # unit + fuzz tests
 pnpm typecheck
 ```
 
-Routing correctness is verified by fuzzing thousands of random origin/destination pairs against a reference Dijkstra implementation and asserting exact cost equality. Subtly-wrong routes are invisible without an oracle.
+```bash
+# Python pipeline tests
+cd packages/pipeline && ./.venv/Scripts/python.exe -m pytest tests/
+```
+
+Routing correctness is verified by fuzzing thousands of random origin/destination pairs against a reference Dijkstra implementation and asserting exact cost equality. Subtly-wrong routes are invisible without an oracle — and the oracle has already caught three real bugs, including a router that returned routes *cheaper* than the true optimum by stitching a path through a step with no edge behind it.
 
 ## License
 
