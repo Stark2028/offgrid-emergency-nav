@@ -12,12 +12,12 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partially done
 
 Two questions that can kill the project. Answer before building on top of them.
 
-- [ ] **Spike A — mesh reality check.** Two physical Android phones, plain WebRTC DataChannel, over (i) home Wi-Fi, (ii) public hotspot with AP isolation, (iii) cellular with no shared network. Measure what actually connects.
-  *Gate: decides how much WebRTC effort is justified versus going all-in on QR exchange. Expectation is (ii) and (iii) both fail.*
+- [ ] **Spike A — automatic BLE discovery.** Two physical Android phones running a Capacitor build with a peripheral-capable BLE plugin (Capawesome or Cap-go — `@capacitor-community/bluetooth-le` is central-only). Do they advertise, discover each other, and exchange a payload with **zero user interaction**, in a pocket, while moving?
+  *This is the question that decides the product. Every app that actually worked in a protest — Bridgefy, Briar, Bitchat — is native with automatic BLE. No browser can advertise.*
 - [ ] **Spike B — offline basemap.** One MapLibre page, PMTiles archive, fully self-hosted style + glyphs + sprites, device in airplane mode, Delhi rendering with **Devanagari labels visible**.
   *This is the classic offline-map trap: default style URLs point at remote CDNs and fail silently.*
 
-> Deferred deliberately — both need physical devices. Neither blocks the routing core, which is why Week 1 ran first. **Do these before Week 3.**
+> Both need physical Android devices. Neither blocks Phase 2 (pure Node), which is why the router runs first. **Spike B before Phase 3; Spike A before Phase 5.**
 
 ---
 
@@ -53,6 +53,7 @@ Two questions that can kill the project. Answer before building on top of them.
   - [x] Halo nodes: coordinates, no adjacency
   - [x] Geometry interned and shared between an edge and its reverse
 - [x] `build_graph.py` — orchestration + manifest
+- [ ] **Safety layer** — extract metro stations, hospitals, open ground and arterial exits from OSM; flag them in the tile format. *Do this while the pipeline is already open: adding it later means reprocessing every tile*
 - [ ] **Pipeline validation pass** — assert no dangling halo refs, every boundary edge present in both adjacent tiles, spot-check known Delhi one-ways against reality
 - [ ] Turn restrictions (`no_left_turn` etc.) — currently ignored; routes may suggest illegal turns
 
@@ -91,6 +92,7 @@ The phase where correctness is actually proven. Nothing downstream matters if th
   - [ ] Halo-node suspend/resume for demand-driven tile loading
 - [ ] **10,000-pair fuzz harness** asserting bidirectional A\* cost == Dijkstra cost exactly (compare costs, not paths — ties make paths non-unique)
 - [ ] Corridor prefetch — load cells intersecting the source→target corridor before searching
+- [ ] **`escape.ts` — multi-target search.** "Get me out" routes to the *nearest safe exit*, not a named destination: one Dijkstra seeded with every safe node at cost 0, run over the reverse graph. Same engine, inverted objective
 - [ ] Path reconstruction: node sequence → polyline with interior geometry
 - [ ] Benchmarks on real Delhi data — route time, tile-load latency, nodes expanded, memory
   *Every performance number in the README must be measured, not asserted*
@@ -109,8 +111,10 @@ End of this phase: a genuinely useful product with no mesh at all. **This is the
   - [ ] Self-hosted style JSON, **all** glyph ranges incl. Devanagari, sprites at 1× and 2×
 - [ ] PMTiles extract for Delhi (`pmtiles extract`, z14) — verify exact CLI flags via `--help`
 - [ ] GPS position + nearest-road snapping
-- [ ] Destination selection (tap / search)
+- [ ] **"GET ME OUT" — the primary flow.** One thumb-sized button, no search field, no menu. Routes away from hazards to the nearest safe exit. Shows a thick line, a distance, and a *place name* ("Rajiv Chowk Metro, 600 m") — a name is something a human can carry when the phone dies
+- [ ] Destination routing — secondary, for when the user does know where they are going
 - [ ] Route rendering
+- [ ] Cold-start GPS handling — last-known position, "finding you" state, manual pin drop
 - [ ] PWA shell — manifest, service worker, install prompt
 - [ ] `navigator.storage.persist()` + quota handling
 - [ ] First-run asset download with progress
@@ -138,22 +142,27 @@ End of this phase: a genuinely useful product with no mesh at all. **This is the
 
 ## Phase 5 — Mesh
 
-Scope set by the Phase 0 Spike A verdict.
+Transports in strict priority order. **BLE is the product**; everything else is a fallback for when it is unavailable.
 
-- [ ] `MeshTransport` interface
-- [ ] `LoopbackTransport` (tests)
+- [ ] `MeshTransport` interface — the abstraction that makes BLE one implementation rather than a rewrite
+- [ ] **`BLETransport` (Capacitor, Android) — the primary field transport.** Automatic advertise + scan, zero user interaction: two phones in pockets, three metres apart, sync silently. The only model that survives a moving crowd
+  - [ ] Peripheral-capable plugin (Capawesome / Cap-go)
+  - [ ] MTU chunking and reassembly (~20 B per packet — why the digest design matters)
+  - [ ] Android 12+ permission handling (BLUETOOTH_SCAN / ADVERTISE / CONNECT)
+- [ ] `QRTransport` — **scoped honestly**: a prepared group syncing *before* things get bad, not strangers exchanging codes under gas
+- [ ] `WebRTCTransport` — opportunistic, only when a LAN exists
 - [ ] `BroadcastChannelTransport` (tabs — demo and testing, not a field transport)
-- [ ] **`QRTransport`** — signed hazard bundle as a QR, scanned by another phone. No network, no pairing, no radio. **The primary field transport**
-  - [ ] Bundle encoding + compression to fit a scannable QR
-  - [ ] Camera scanning
-- [ ] `WebRTCTransport` — LAN-opportunistic, QWBP-compressed QR signalling (~60 B vs ~2500 B SDP)
+- [ ] `LoopbackTransport` (tests)
 - [ ] Gossip protocol
   - [ ] **Sorted ID list reconciliation, not Bloom filters.** ~8 KB for hundreds of hazards; a Bloom false positive silently drops a hazard forever, degrading worst under emergency load
   - [ ] TTL hop limit
   - [ ] Time-bounded seen-ID cache
   - [ ] Receiver-enforced rate limits (per key, per geohash cell)
   - [ ] Hop-count trust weighting — physical proximity is the only scarce resource in the threat model
-- [ ] Demo: two phones, hazard shared by QR, both reroute
+- [ ] **Explicitly out of scope: messaging.** Bridgefy was broken twice by academic cryptographers, including after adopting the Signal protocol; researchers advise protesters not to rely on it. OffGrid carries hazard reports *about places*, never communication between people — a far narrower attack surface and far less incriminating data
+- [ ] No identity, no accounts, no contact list. Ephemeral rotating keys: enough for "two independent reports", not enough for "who"
+- [ ] **Never claim anonymity.** BLE advertising is a radio beacon and is trackable. Bridgefy's real failure was being trusted because it was marketed as safe
+- [ ] Demo: two phones in pockets, hazard reported on one, both reroute with no interaction
 
 ---
 
@@ -171,15 +180,14 @@ Scope set by the Phase 0 Spike A verdict.
 
 ---
 
-## Phase 7 — Stretch: native BLE
+## Phase 7 — Dual-target packaging
 
-Only if Phases 1–6 land clean.
+The same codebase ships twice. Not a compromise — two genuinely different products.
 
-- [ ] Capacitor Android wrapper
-- [ ] `BLETransport` — native advertise + scan, the one transport browsers cannot provide
-- [ ] BLE MTU chunking and reassembly
-- [ ] Android 12+ permission handling
-- [ ] APK distribution
+- [ ] **Web build** — instant access, no install, full offline routing, no mesh. What a recruiter clicks; what someone with no signal uses
+- [ ] **Android build (Capacitor)** — everything, including the BLE mesh
+- [ ] APK signing key + distribution
+- [ ] Verify the transport interface really does isolate the difference — web gets BroadcastChannel/WebRTC/QR, Android adds BLE, one codebase
 
 ---
 
