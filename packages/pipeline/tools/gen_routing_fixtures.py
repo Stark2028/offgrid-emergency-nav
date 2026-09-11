@@ -53,7 +53,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from graph import GraphBuilder, Edge  # noqa: E402
-from tiles import build_tiles  # noqa: E402
+from tiles import build_tiles, dense_id_map  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent.parent.parent / "core" / "test" / "fixtures" / "routing"
 
@@ -417,8 +417,12 @@ def main() -> None:
             (OUT_DIR / filename).write_bytes(blob)
             written.append(filename)
 
+        # Tiles store dense ids, not OSM ids (see tiles.py). Expectations must
+        # be expressed in the same space the runtime reads, or a test asks for
+        # node "1" and is handed whichever node landed in dense slot 1.
+        dense = dense_id_map(builder.nodes)
         node_ids = sorted(builder.nodes)
-        real_ids = [n for n in node_ids if not case.is_stub(n)]
+        real_ids = [dense[n] for n in node_ids if not case.is_stub(n)]
 
         entry: dict = {
             "files": sorted(written),
@@ -426,26 +430,40 @@ def main() -> None:
             # Nodes that matter to a test; stubs exist only to shape the graph.
             "real": real_ids,
             "nodes": {
-                str(node_id): {
+                str(dense[node_id]): {
                     "lat": node.lat,
                     "lon": node.lon,
                     "component": components[node_id],
+                    "osmId": node_id,
                 }
                 for node_id, node in sorted(builder.nodes.items())
             },
             "edges": sorted(
-                [{"source": e.source, "target": e.target, "weight": e.weight} for e in builder.edges],
+                [
+                    {
+                        "source": dense[e.source],
+                        "target": dense[e.target],
+                        "weight": e.weight,
+                    }
+                    for e in builder.edges
+                ],
                 key=lambda e: (e["source"], e["target"]),
             ),
-            "shortest": all_pairs(builder.edges, node_ids),
+            "shortest": {
+                f"{dense[int(k.split('->')[0])]}->{dense[int(k.split('->')[1])]}": v
+                for k, v in all_pairs(builder.edges, node_ids).items()
+            },
         }
 
         if name in ESCAPE_EXITS:
             exits = [e for e in ESCAPE_EXITS[name] if e in builder.nodes]
             if len(exits) != len(ESCAPE_EXITS[name]):
                 failures.append(f"{name}: expected exits {ESCAPE_EXITS[name]}, survived {exits}")
-            entry["exits"] = exits
-            entry["toNearestExit"] = nearest_exit(builder.edges, node_ids, exits)
+            entry["exits"] = [dense[e] for e in exits]
+            entry["toNearestExit"] = {
+                str(dense[int(k)]): v
+                for k, v in nearest_exit(builder.edges, node_ids, exits).items()
+            }
 
         index[name] = entry
         print(

@@ -39,50 +39,85 @@ Companion documents:
 
 ## Open bugs
 
-### BUG-001 — Router emits unresolvable node ids in paths (OPEN, high)
+### BUG-009 — Router occasionally returns a slightly suboptimal path (OPEN, medium)
 
-**Symptom.** Three scale tests fail against real Delhi tiles. A returned path
-contains a step with no forward edge behind it, and the reported cost is
-*lower* than the reference implementation's.
+**Symptom.** Two scale tests fail. The router returns a **valid, walkable**
+path that is sometimes longer than optimal — never shorter.
 
 ```
-1674862289->1674822966  cost mismatch: router 16526, oracle 17808
-1674863407->1267750827  no edge 4230126055->1277533033
+101113->82456   router 18023, oracle 17995   (+28,  +0.16%)
+236803->131064  router  6484, oracle  6479   (+5,   +0.08%)
+223649->224653  router 23362, oracle 23302   (+60,  +0.26%)
+240370->96541   router 19870, oracle 19027   (+843, +4.4%)
 ```
 
-**Evidence gathered (2026-09-11).** The nodes in the broken steps were
-classified against the loaded tile set:
+Measured over 301 routable sampled pairs: **6 mismatches, all dearer, none
+cheaper.** `brokenPaths=0`, `unresolvableNodes=0` — every returned path is
+physically traversable.
 
-| node | resolves? | component | fwd edges | rev edges |
-|---|---|---|---|---|
-| 4230126055 | **no** | -1 | 0 | 0 |
-| 1277533033 | yes | 0 | 3 | 3 |
-| 4228017524 | **no** | -1 | 0 | 0 |
-| 1269770077 | yes | 0 | 3 | 3 |
+**Why this is a different bug from BUG-001.** BUG-001 produced paths that were
+*cheaper* than reality and contained steps with no edge behind them. This
+produces real routes that are merely a little long. Same test, different cause.
 
-The failing nodes are **not halo nodes**. They do not resolve at all — the
-loaded block has never heard of them — yet they appear inside a returned path.
+**What the signature means.** Always dearer, never cheaper, paths always valid
+⇒ the search stops before confirming the optimum. Suspect the termination bound
+`topF + topB - 2*keyOffset >= 2*mu` or the heap-key arithmetic feeding it.
 
-**Leading hypothesis (NOT yet confirmed).** `intern()` in
-`bidirectional-astar.ts` is called on `edge.target` for every relaxed edge,
-including targets outside the loaded tile set. Those ids get dense slots, enter
-the parent chains, and flow out through `joinPaths`. The reference Dijkstra does
-not hit this because it ignores nodes with no adjacency.
+**Attempted and did NOT work (2026-09-11).** Rewriting the potential in doubled
+integer units to remove `Math.round` error, and replacing the `Math.max(0, …)`
+key clamp with an assertion. Rationale was that a half-integer potential rounds
+into the key, and two rounded keys can sum a unit low. **The failing pair
+returned byte-identical numbers afterwards (18023 vs 17995), so this was not the
+cause.** The change is defensible on its own terms (the clamp really would
+destroy heap ordering if it ever fired, and the assertion proves it does not) and
+was kept, but it is not the fix.
 
-**Do not treat that hypothesis as established.** Two earlier diagnoses of this
-same failure were wrong (see BUG-004, BUG-005). The next step is to instrument:
-dump both search trees at the moment `mu` is set for the failing pair and read
-what the parent chains actually contain.
+**Next step — instrument, do not theorise.** Three hypotheses have now been
+wrong. Dump `topF`, `topB`, `mu`, `keyOffset` and `settledCount` at the moment
+the bound breaks for `101113->82456`, and compare against the oracle's settled
+set to find which node the search failed to expand.
 
 **Reproduce:** `pnpm --filter @offgrid/core test scale`
 
-**Scope:** only reachable with real tiles (`data/tiles/`, gitignored build
-output — regenerate with `packages/pipeline/build_graph.py`). All 47 fixture
-tests pass, so hand-built graphs do not reproduce it.
-
----
-
 ## Fixed bugs
+
+### BUG-001 — Router emitted unresolvable node ids in paths (FIXED)
+
+**Root cause: OSM node ids exceed 2\*\*32, and the pipeline masked them to u32.**
+
+Delhi's largest OSM node id is **14,162,787,060** — 3.3x past `2**32`. The
+serialiser did `sorted(member_ids)` on true Python integers, then wrote each as
+`struct.pack("<I", node_id & 0xFFFFFFFF)`. Truncation is:
+
+- **not order-preserving** — the stored node table was therefore *not* ascending,
+  while `format.ts` documented it as ascending and `Tile.findSlot` binary-searched
+  on that guarantee. Measured: **all 40 sampled tiles violated it, and 4,380 of
+  14,980 forward edge targets (29%) looked unresolvable** despite being present;
+- **not injective** — distinct OSM nodes could collide onto one stored id.
+
+So a "phantom" node id on a returned path was never foreign. It was a masked id
+whose true owner sorted elsewhere, which `findSlot` then failed to locate.
+
+**Fix.** Nodes are assigned **dense build-local indices** ordered by OSM id, so
+ascending order is structural rather than a convention a later edit can break.
+Arrays stay `u32` with no size cost. `TILE_VERSION` bumped to 2 (version 1 tiles
+are unreadable and must be rebuilt), `dense_id_map()` is exposed so fixtures can
+describe expectations in the runtime's id space, and the serialiser now asserts
+strict ascendingness per tile.
+
+**Verified.** `brokenPaths=0`, `unresolvableNodes=0`, and zero router-cheaper-
+than-oracle cases across 301 sampled pairs. Graph output is byte-identical in
+shape (246,466 nodes / 658,533 edges / 28.5 MB) — this was an encoding defect,
+not a graph defect.
+
+**Both earlier hypotheses in this log were wrong.** Neither halo participation
+in a join nor `intern()` admitting foreign ids had anything to do with it. Three
+sessions were spent on search-logic theories for what was a data-format bug. The
+lesson is in the ground rules: instrument before theorising.
+
+**Why fixtures never caught it.** Hand-built graphs use small sequential ids that
+survive masking unchanged, so they are sorted either way. Only real OSM ids past
+`2**32` expose it — which is the argument for the scale harness existing.
 
 ### BUG-002 — Router fabricated a zero-cost route (FIXED)
 
@@ -231,6 +266,8 @@ Multi-week preprocessing for a graph plain bidirectional A\* solves in well unde
   (8.2 KB mean, 64 KB max).
 - **510 components**; the largest holds 99.4% of nodes.
 - Geohash-6 cells are ~1.22 km × 0.61 km.
+- **Max OSM node id: 14,162,787,060.** Well past `2**32` — node ids must never be
+  stored in a u32 without a remap. See BUG-001.
 - `highway=service` is excluded: 13.2% of ways, near-zero value for
   through-routing, ~20% of tile size.
 
@@ -262,10 +299,10 @@ graph is correct — the estimate measured something else.
 
 | Suite | Count | Command |
 |---|---|---|
-| TypeScript (core) | 85 pass / 3 fail | `pnpm --filter @offgrid/core test` |
+| TypeScript (core) | 86 pass / 2 fail | `pnpm --filter @offgrid/core test` |
 | Python (pipeline) | 118 pass | `cd packages/pipeline && ./.venv/Scripts/python.exe -m pytest tests/` |
 
-The 3 failures are all BUG-001. Fixture tests (47) are fully green.
+The 2 failures are BUG-009. All 47 fixture tests are green.
 
 **Fixture generators** — rerun these if the graph format or simplification
 changes:

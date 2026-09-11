@@ -6,7 +6,7 @@ During internet blackouts, natural disasters, or mass protests, cellular network
 
 OffGrid computes routes entirely on-device from a local road graph, and shares hazard reports between nearby devices with no infrastructure at all.
 
-> **Status: in development.** The graph and routing core is built first and verified against a reference implementation, before any UI exists. 203 of 206 tests pass; the 3 failures are a known open bug in path reconstruction at scale.
+> **Status: in development.** The graph and routing core is built first and verified against a reference implementation, before any UI exists. 204 of 206 tests pass; the 2 failures are a known open bug where a route is occasionally a fraction of a percent longer than optimal.
 >
 > Contributors — including AI assistants — should read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before touching routing, the tile format, or the mesh design. It records the decisions that must not be silently reversed and the fixes that were tried and were wrong.
 

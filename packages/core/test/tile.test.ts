@@ -40,7 +40,7 @@ describe("Tile header", () => {
     expect(tile!.header.nodeCount).toBeGreaterThan(0);
     // Constructing at all proves magic/version matched; assert them explicitly.
     expect(TILE_MAGIC).toBe(0x4f475254);
-    expect(TILE_VERSION).toBe(1);
+    expect(TILE_VERSION).toBe(2);
   });
 
   it("rejects a buffer that is not a tile", () => {

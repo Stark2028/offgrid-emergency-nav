@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import geohash  # noqa: E402
 from graph import GraphBuilder  # noqa: E402
-from tiles import build_tiles  # noqa: E402
+from tiles import build_tiles, dense_id_map  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent.parent.parent / "core" / "test" / "fixtures" / "tiles"
 
@@ -117,21 +117,31 @@ def main() -> None:
 
         # Expectations the TS tests assert against, derived from the same graph
         # the bytes came from.
+        # Tiles store dense ids, not OSM ids (see tiles.py), so expectations
+        # are keyed the same way the runtime reads them. osmId is kept for
+        # anyone tracing a fixture back to the graph that produced it.
+        dense = dense_id_map(builder.nodes)
+
         index[name] = {
             "files": sorted(written),
             "cells": sorted(tiles),
             "nodes": {
-                str(node_id): {
+                str(dense[node_id]): {
                     "lat": node.lat,
                     "lon": node.lon,
                     "component": components[node_id],
                     "cell": geohash.encode(node.lat, node.lon, 6),
+                    "osmId": node_id,
                 }
                 for node_id, node in sorted(builder.nodes.items())
             },
             "edges": sorted(
                 [
-                    {"source": e.source, "target": e.target, "weight": e.weight}
+                    {
+                        "source": dense[e.source],
+                        "target": dense[e.target],
+                        "weight": e.weight,
+                    }
                     for e in builder.edges
                 ],
                 key=lambda e: (e["source"], e["target"]),

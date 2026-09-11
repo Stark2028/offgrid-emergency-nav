@@ -28,7 +28,11 @@ import geohash
 from graph import Edge, Node
 
 TILE_MAGIC = 0x4F475254  # "OGRT"
-TILE_VERSION = 1
+# Keep in step with TILE_VERSION in packages/core/src/graph/format.ts.
+# Version 2: node ids are dense build-assigned indices, not OSM ids masked to
+# u32. OSM ids exceed 2**32, so the mask was neither order-preserving nor
+# injective -- it broke the runtime's binary search and allowed collisions.
+TILE_VERSION = 2
 HEADER_BYTES = 64
 TILE_PRECISION = 6
 
@@ -69,6 +73,16 @@ def assign_tiles(nodes: dict[int, Node]) -> dict[int, str]:
     }
 
 
+def dense_id_map(nodes: dict[int, Node]) -> dict[int, int]:
+    """OSM node id -> dense id, the value actually stored in tiles.
+
+    Exposed because callers cannot reconstruct it: it depends on the full node
+    set, not on any one tile. Test fixtures need it to describe expectations in
+    the same id space the runtime reads.
+    """
+    return {osm_id: index for index, osm_id in enumerate(sorted(nodes))}
+
+
 def build_tiles(
     nodes: dict[int, Node],
     edges: list[Edge],
@@ -97,8 +111,24 @@ def build_tiles(
             tile_edges[target_cell].append(edge)
             members[target_cell].add(edge.source)
 
+    # Dense global ids.
+    #
+    # OSM node ids exceed 2**32 (the Delhi crop peaks at 14,162,787,060), so the
+    # previous scheme -- sort the true ids, then mask each to u32 on write --
+    # was doubly broken. Truncation does not preserve order, so the stored array
+    # was not ascending and the runtime's binary search silently missed nodes
+    # that were present; and the mask is not injective, so distinct nodes could
+    # collide onto one stored id.
+    #
+    # Assigning a dense index ordered by true OSM id makes ascending order a
+    # structural property of the format rather than a convention a later edit
+    # can quietly break, and keeps the arrays u32 with no size cost.
+    dense_of = dense_id_map(nodes)
+
     return {
-        cell: _serialise_tile(cell, members[cell], tile_edges[cell], nodes, owner, components)
+        cell: _serialise_tile(
+            cell, members[cell], tile_edges[cell], nodes, owner, components, dense_of
+        )
         for cell in sorted(members)
     }
 
@@ -110,9 +140,12 @@ def _serialise_tile(
     nodes: dict[int, Node],
     owner: dict[int, str],
     components: dict[int, int],
+    dense_of: dict[int, int],
 ) -> bytes:
-    # Global ids ascending, so the runtime can binary-search the node table.
-    ordered = sorted(member_ids)
+    # Ordered by *dense* id so the stored array is ascending by construction --
+    # see the note in build_tiles. Sorting by OSM id and truncating on write is
+    # what produced an unsorted table and broke the runtime's binary search.
+    ordered = sorted(member_ids, key=lambda node_id: dense_of[node_id])
     slot_of = {node_id: index for index, node_id in enumerate(ordered)}
     node_count = len(ordered)
 
@@ -126,7 +159,7 @@ def _serialise_tile(
         node = nodes[node_id]
         lat += struct.pack("<f", node.lat)
         lon += struct.pack("<f", node.lon)
-        global_ids += struct.pack("<I", node_id & 0xFFFFFFFF)
+        global_ids += struct.pack("<I", dense_of[node_id])
         component_ids += struct.pack("<H", min(components.get(node_id, 0), 0xFFFF))
 
         flag = 0
@@ -161,6 +194,16 @@ def _serialise_tile(
 
     fwd_edge_count = len(fwd_targets) // 4
     rev_edge_count = len(rev_targets) // 4
+
+    # The runtime binary-searches this array (Tile.findSlot). A violation here
+    # does not fail loudly -- it makes nodes that are present look absent, which
+    # surfaced as routes containing steps with no edge behind them.
+    dense_sequence = [dense_of[node_id] for node_id in ordered]
+    if any(b <= a for a, b in zip(dense_sequence, dense_sequence[1:])):
+        raise AssertionError(
+            f"tile {cell}: stored node ids are not strictly ascending -- "
+            "the runtime's binary search depends on this"
+        )
 
     body = (
         bytes(lat)
