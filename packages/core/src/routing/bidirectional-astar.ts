@@ -147,13 +147,21 @@ export function route(
   };
 
   /**
-   * Balanced potential at a node: half the difference between the estimate to
-   * the target and the estimate from the source.
+   * Balanced potential at a node, **doubled** to stay an integer.
+   *
+   * The true potential is `(h_f - h_b) / 2`, which is a half-integer. Rounding
+   * it into the heap key perturbs every key by up to 0.5, and since the
+   * termination test sums two keys, the bound can read up to a full unit low
+   * and stop before the optimum is confirmed -- which showed up as routes a few
+   * percent *dearer* than the reference implementation, never cheaper.
+   *
+   * Working in doubled units keeps the arithmetic exact. Distances are doubled
+   * to match, and the factor is divided back out of the termination test.
    *
    * `p_f + p_b == 0` by construction, which is what keeps the two searches
    * consistent with one another.
    */
-  const potential = (id: number): number => {
+  const doublePotential = (id: number): number => {
     const position = tiles.position(id);
     if (!position) return 0;
     const toTarget = heuristicWeight(
@@ -170,7 +178,7 @@ export function route(
       position.lon,
       WEIGHT_SCALE,
     );
-    return (toTarget - fromSource) / 2;
+    return toTarget - fromSource;
   };
 
   const sourceIndex = intern(source);
@@ -180,15 +188,29 @@ export function route(
   backward.distance[targetIndex] = 0;
 
   // Heap keys must be non-negative integers (MinHeap is Uint32-backed), but a
-  // balanced potential can be negative. Offsetting every key by the same
-  // constant preserves ordering and keeps the arithmetic in range.
+  // doubled potential can be negative -- as low as -h(source, target). Offset
+  // every key by that bound so the sum is never negative.
+  //
+  // Clamping at zero instead would be a silent correctness bug: it maps
+  // distinct keys onto the same value, so the heap pops out of order and
+  // peekPriority under-reports the frontier, breaking the termination test.
   const keyOffset = Math.ceil(
     Math.abs(
       heuristicWeight(sourcePos.lat, sourcePos.lon, targetPos.lat, targetPos.lon, WEIGHT_SCALE),
     ),
   );
-  const toKey = (distance: number, id: number): number =>
-    Math.max(0, Math.round(distance + potential(id) + keyOffset));
+
+  /** Key in doubled units: 2*distance + doubledPotential + offset. */
+  const toKey = (distance: number, id: number): number => {
+    const key = 2 * distance + doublePotential(id) + keyOffset;
+    if (key < 0) {
+      // The offset is meant to make this impossible. If it ever fires, the
+      // bound above is wrong -- fail loudly rather than clamping and silently
+      // returning suboptimal routes.
+      throw new Error(`negative heap key ${key}: keyOffset ${keyOffset} is too small`);
+    }
+    return key;
+  };
 
   forward.heap.push(sourceIndex, toKey(0, source));
   backward.heap.push(targetIndex, toKey(0, target));
@@ -285,9 +307,11 @@ export function route(
     const topF = forward.heap.peekPriority()!;
     const topB = backward.heap.peekPriority()!;
 
-    // The termination bound. Keys carry the offset twice over the two heaps, so
-    // it is subtracted back out before comparing against a real path cost.
-    if (topF + topB - 2 * keyOffset >= mu) break;
+    // The termination bound, in doubled units. Each key carries the offset, so
+    // both are subtracted out; the remaining sum is 2*(real path cost), which
+    // is compared against 2*mu rather than dividing and losing the exactness
+    // the doubling was introduced to preserve.
+    if (topF + topB - 2 * keyOffset >= 2 * mu) break;
 
     // Expand whichever side is cheaper to advance — keeps the frontiers
     // balanced when one direction branches more than the other.

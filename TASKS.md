@@ -2,7 +2,7 @@
 
 End-to-end plan, from scaffold to deployed product. Reflects the state of the repo, not the original proposal — several items changed once real data and real browser constraints got involved.
 
-**Status:** Phase 1 complete, Phase 2 mostly complete. **203 of 206 tests passing** (85/88 TypeScript, 118/118 Python). The 3 failures are all BUG-001 — see [ENGINEERING_LOG.md](ENGINEERING_LOG.md).
+**Status:** Phase 1 complete, Phase 2 mostly complete. **204 of 206 tests passing** (86/88 TypeScript, 118/118 Python). All 47 routing fixture tests are green. The 2 remaining failures are BUG-009 — see [ENGINEERING_LOG.md](ENGINEERING_LOG.md).
 
 > **Continuing this work (human or AI)?** Read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) first. It records which fixes were wrong and why, so the same dead ends are not re-explored.
 
@@ -93,7 +93,7 @@ The phase where correctness is actually proven. Nothing downstream matters if th
   - [x] O(1) unreachability via component ids
   - [ ] Halo-node suspend/resume for demand-driven tile loading — currently reports `missing` cells for the caller to load and retry, rather than suspending mid-search
 - [x] Adversarial fixture suite — 6 graphs (grid, detour, asymmetric, ladder, bottleneck, escape) with expected costs from an *independent* Dijkstra. **47 tests, all green**
-- [~] **Scale fuzz harness** — 2,000 random pairs over real Delhi tiles, diffed against the oracle. **3 failures: BUG-001**
+- [~] **Scale fuzz harness** — 2,000 random pairs over real Delhi tiles, diffed against the oracle. Found BUG-001 (fixed) and BUG-009 (open). **2 failures: BUG-009**
 - [x] `packages/core/src/index.ts` — the barrel `package.json` already pointed at
 - [ ] Corridor prefetch — load cells intersecting the source→target corridor before searching
 - [~] **Multi-target search for "get me out".** `dijkstraFrom` seeds every safe node at cost 0 over the reverse graph, so each node learns its cost to the *nearest* exit in one sweep. Tested (4 tests) against the `escape` fixture. Still needs: a bidirectional/A\* variant for speed, and real safe-exit data from the pipeline
@@ -209,7 +209,8 @@ The same codebase ships twice. Not a compromise — two genuinely different prod
 
 | Item | Status |
 |---|---|
-| **BUG-001: router emits unresolvable node ids** | 3 scale tests fail. Paths contain steps with no edge behind them, cost lower than the oracle. Only reproduces on real tiles. See [ENGINEERING_LOG.md](ENGINEERING_LOG.md) |
+| **BUG-009: occasional suboptimal route** | 2 scale tests fail. Paths are valid and walkable but 0.03–4% longer than optimal in ~2% of pairs (6 of 301 sampled). Always dearer, never cheaper ⇒ premature termination. See [ENGINEERING_LOG.md](ENGINEERING_LOG.md) |
+| ~~BUG-001: unresolvable node ids~~ | **Fixed.** OSM ids exceed 2³²; masking them to u32 broke both sort order and uniqueness. Now dense build-local ids, `TILE_VERSION` 2 |
 | `apps/web` is an empty stub | No `package.json`; workspace resolves 2 projects, not 3 |
 | Turn restrictions ignored | Routes may suggest illegal turns |
 | Tile compression | 28.5 MB uncompressed; gzip/brotli would likely halve it. Deferred until real-device storage testing |

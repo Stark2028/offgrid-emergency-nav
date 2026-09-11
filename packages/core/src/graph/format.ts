@@ -10,10 +10,18 @@
  * Layout is little-endian throughout (every platform we target is LE, and
  * DataView byte-swapping on hot paths is not worth it).
  *
+ * **Node ids are dense build-assigned indices, not OSM ids.** OSM node ids
+ * exceed 2**32 (Delhi peaks around 1.4e10), so storing them in u32 required a
+ * mask that was neither order-preserving nor injective: the node table stopped
+ * being ascending, `findSlot`'s binary search silently missed present nodes,
+ * and distinct nodes could collide. The pipeline now assigns each node an index
+ * ordered by OSM id, making the ascending invariant structural. A node id is
+ * stable for a given build of the tile set and meaningless across builds.
+ *
  * ┌─ header (64 bytes, see HEADER_* offsets)
  * ├─ nodeLat        Float32 × nodeCount
  * ├─ nodeLon        Float32 × nodeCount
- * ├─ nodeGlobalId   Uint32  × nodeCount   ascending — enables binary search
+ * ├─ nodeGlobalId   Uint32  × nodeCount   dense id, strictly ascending
  * ├─ nodeComponent  Uint16  × nodeCount   connected-component id
  * ├─ nodeFlags      Uint8   × nodeCount   NODE_FLAG_*
  * ├─ (pad to 4)
@@ -35,7 +43,11 @@
  */
 
 export const TILE_MAGIC = 0x4f47_5254; // "OGRT" — OffGrid Route Tile
-export const TILE_VERSION = 1;
+// Bumped to 2: node ids are now dense build-assigned indices rather than
+// OSM ids masked to u32. OSM ids exceed 2**32, so masking both destroyed the
+// ascending order the runtime binary-searches and allowed distinct nodes to
+// collide. Version 1 tiles are not readable and must be rebuilt.
+export const TILE_VERSION = 2;
 
 export const HEADER_BYTES = 64;
 
