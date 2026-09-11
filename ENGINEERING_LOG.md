@@ -19,9 +19,14 @@ Companion documents:
    "fix" the oracle to make tests pass. It is deliberately simple so it can be
    audited by reading.
 
-2. **Never claim a fix without running the tests.** Two of the four routing
-   fixes attempted so far were wrong — one was a regression that broke six
-   passing tests. Run `pnpm --filter @offgrid/core test` before and after.
+2. **Never claim a fix without running the tests.** Several routing fixes
+   attempted so far were wrong — one was a regression that broke six passing
+   tests. Run `pnpm --filter @offgrid/core test` before and after.
+
+   Related: **instrument before theorising.** BUG-001 and BUG-009 each cost
+   three wrong hypotheses. Both were solved in one pass once actual values were
+   dumped — tile arrays for BUG-001, potential sums and settled counts for
+   BUG-009. A plausible mechanism is not evidence.
 
 3. **Compare costs, not paths.** Ties make the optimal path non-unique. Two
    correct implementations can legitimately return different node sequences of
@@ -39,45 +44,7 @@ Companion documents:
 
 ## Open bugs
 
-### BUG-009 — Router occasionally returns a slightly suboptimal path (OPEN, medium)
-
-**Symptom.** Two scale tests fail. The router returns a **valid, walkable**
-path that is sometimes longer than optimal — never shorter.
-
-```
-101113->82456   router 18023, oracle 17995   (+28,  +0.16%)
-236803->131064  router  6484, oracle  6479   (+5,   +0.08%)
-223649->224653  router 23362, oracle 23302   (+60,  +0.26%)
-240370->96541   router 19870, oracle 19027   (+843, +4.4%)
-```
-
-Measured over 301 routable sampled pairs: **6 mismatches, all dearer, none
-cheaper.** `brokenPaths=0`, `unresolvableNodes=0` — every returned path is
-physically traversable.
-
-**Why this is a different bug from BUG-001.** BUG-001 produced paths that were
-*cheaper* than reality and contained steps with no edge behind them. This
-produces real routes that are merely a little long. Same test, different cause.
-
-**What the signature means.** Always dearer, never cheaper, paths always valid
-⇒ the search stops before confirming the optimum. Suspect the termination bound
-`topF + topB - 2*keyOffset >= 2*mu` or the heap-key arithmetic feeding it.
-
-**Attempted and did NOT work (2026-09-11).** Rewriting the potential in doubled
-integer units to remove `Math.round` error, and replacing the `Math.max(0, …)`
-key clamp with an assertion. Rationale was that a half-integer potential rounds
-into the key, and two rounded keys can sum a unit low. **The failing pair
-returned byte-identical numbers afterwards (18023 vs 17995), so this was not the
-cause.** The change is defensible on its own terms (the clamp really would
-destroy heap ordering if it ever fired, and the assertion proves it does not) and
-was kept, but it is not the fix.
-
-**Next step — instrument, do not theorise.** Three hypotheses have now been
-wrong. Dump `topF`, `topB`, `mu`, `keyOffset` and `settledCount` at the moment
-the bound breaks for `101113->82456`, and compare against the oracle's settled
-set to find which node the search failed to expand.
-
-**Reproduce:** `pnpm --filter @offgrid/core test scale`
+None. All 206 tests pass (88 TypeScript, 118 Python).
 
 ## Fixed bugs
 
@@ -118,6 +85,64 @@ lesson is in the ground rules: instrument before theorising.
 **Why fixtures never caught it.** Hand-built graphs use small sequential ids that
 survive masking unchanged, so they are sorted either way. Only real OSM ids past
 `2**32` expose it — which is the argument for the scale harness existing.
+
+### BUG-009 — Backward search used the forward potential (FIXED)
+
+**Root cause: `toKey` applied the same potential sign to both searches.**
+
+The balanced scheme requires `p_f(v) + p_b(v) == 0` at every node. `toKey` took
+no direction argument, so all three call sites — both initial pushes and the
+in-loop relaxation — built keys with `+doublePotential(v)`. Instrumenting the
+failing pair showed the actual sum was `2*dp(v)`: 5998, 5488, 5238, 4984, never
+zero.
+
+The backward search was therefore steered toward the *target* it started from
+instead of toward the source. The termination bound compares frontier keys that
+no longer mean what it assumes, so the search stopped believing it was finished
+while a cheaper path was still open.
+
+**Symptom.** Routes 0.03–4% longer than optimal in ~2% of pairs — always dearer,
+never cheaper, paths always valid and walkable.
+
+**Two measurements that pinned it, after three wrong theories:**
+
+- `maxSettled: 1e7` changed nothing (514 settled either way). The search was not
+  being cut short by a budget; it genuinely believed it was done. That killed the
+  whole "stopped too early for want of effort" family.
+- The router settled **514** nodes against the oracle's **1249**, diverging after
+  12 shared nodes. Exploring *less* and committing to a wrong branch is the
+  signature of a misdirected frontier, not a truncated one.
+
+**Fix.** `SearchState` carries its own sign (`+1` forward, `-1` backward) and
+`toKey` takes the state, so a key cannot be built without choosing a side. The
+invariant is now structural rather than a convention spread across call sites.
+
+**Measured benefit, now that it is correct.** On real Delhi tiles across 420
+routable pairs: **A\* settles 872 nodes vs Dijkstra's 2501 — 65% fewer.** This is
+the first honest benchmark of the bidirectional claim; it was not measurable
+while the potential was wrong.
+
+**Attempted and did NOT work.** Rewriting the potential in doubled integer units
+to remove `Math.round` error, and replacing the `Math.max(0, …)` key clamp with
+an assertion. The failing pair returned byte-identical numbers afterwards. Kept
+anyway — the clamp really would destroy heap ordering if it fired, and the
+assertion proves it does not — but it was not the fix.
+
+### BUG-010 — A fixture test hardcoded node ids that the dense remap invalidated (FIXED)
+
+`routing.test.ts`'s one-way test asserted `route(tiles, 1, 4).cost < route(tiles, 4, 1).cost`
+using literals written when fixtures were keyed by OSM id. After BUG-001 those
+labels addressed different nodes, so the inequality was asserting a premise that
+no longer held — while the two adjacent assertions, which read expected costs
+from the fixture, passed.
+
+**The router was right and the test was wrong.** Worth stating because the
+instinct on a red test is to suspect the code.
+
+**Fix.** The test now derives asymmetric pairs from the fixture's own `shortest`
+table and checks the router against the oracle in both directions for every one.
+A literal node id in a test is now a smell: ids are dense build-local indices, so
+a literal means whatever landed in that slot.
 
 ### BUG-002 — Router fabricated a zero-cost route (FIXED)
 
@@ -299,10 +324,10 @@ graph is correct — the estimate measured something else.
 
 | Suite | Count | Command |
 |---|---|---|
-| TypeScript (core) | 86 pass / 2 fail | `pnpm --filter @offgrid/core test` |
+| TypeScript (core) | 88 pass | `pnpm --filter @offgrid/core test` |
 | Python (pipeline) | 118 pass | `cd packages/pipeline && ./.venv/Scripts/python.exe -m pytest tests/` |
 
-The 2 failures are BUG-009. All 47 fixture tests are green.
+All green, including the 2,000-pair scale fuzz against real Delhi tiles.
 
 **Fixture generators** — rerun these if the graph format or simplification
 changes:

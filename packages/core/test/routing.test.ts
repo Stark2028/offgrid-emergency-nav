@@ -159,14 +159,29 @@ describe("bidirectional A*", () => {
   });
 
   it("respects one-way streets", () => {
-    // detour: 1->4 may take the direct one-way; 4->1 must use the longer bypass.
+    // The detour fixture has a direct one-way and a longer two-way bypass, so
+    // some pairs cost differently in each direction.
+    //
+    // Endpoints are derived from the fixture rather than hardcoded: node ids are
+    // dense build-local indices (see BUG-001), so a literal id means whatever
+    // landed in that slot and silently stops testing what it claims to.
     const tiles = loadSet("detour");
-    const there = route(tiles, 1, 4)!;
-    const back = route(tiles, 4, 1)!;
+    const shortest = index.detour.shortest as Record<string, number>;
 
-    expect(there.cost).toBeLessThan(back.cost);
-    expect(there.cost).toBe((index.detour.shortest as Record<string, number>)["1->4"]);
-    expect(back.cost).toBe((index.detour.shortest as Record<string, number>)["4->1"]);
+    const asymmetric = Object.keys(shortest)
+      .map((key) => {
+        const [a, b] = key.split("->").map(Number);
+        return { a: a!, b: b!, there: shortest[key]!, back: shortest[`${b}->${a}`] };
+      })
+      .filter((pair) => pair.back !== undefined && pair.there !== pair.back);
+
+    expect(asymmetric.length, "fixture should contain directionally asymmetric pairs").toBeGreaterThan(0);
+
+    // The router must agree with the oracle in *both* directions for every one.
+    for (const { a, b, there, back } of asymmetric) {
+      expect(route(tiles, a, b)!.cost, `${a}->${b}`).toBe(there);
+      expect(route(tiles, b, a)!.cost, `${b}->${a}`).toBe(back);
+    }
   });
 
   it("explores less of the graph than an exhaustive search", () => {
