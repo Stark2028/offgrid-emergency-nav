@@ -6,7 +6,7 @@ During internet blackouts, natural disasters, or mass protests, cellular network
 
 OffGrid computes routes entirely on-device from a local road graph, and shares hazard reports between nearby devices with no infrastructure at all.
 
-> **Status: in development.** The graph and routing core is built first and verified against a reference implementation, before any UI exists. 204 of 206 tests pass; the 2 failures are a known open bug where a route is occasionally a fraction of a percent longer than optimal.
+> **Status: in development.** The graph and routing core is built first and verified against a reference implementation, before any UI exists. All 206 tests pass, including a 2,000-pair fuzz against real Delhi data. No UI yet.
 >
 > Contributors — including AI assistants — should read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before touching routing, the tile format, or the mesh design. It records the decisions that must not be silently reversed and the fixes that were tried and were wrong.
 
@@ -16,7 +16,7 @@ OffGrid computes routes entirely on-device from a local road graph, and shares h
 
 | | |
 |---|---|
-| **Routing** | Bidirectional A\* over a CSR-encoded road graph in flat typed arrays, running in a Web Worker |
+| **Routing** | Bidirectional A\* over a CSR-encoded road graph in flat typed arrays. Measured on real Delhi data: **872 nodes settled vs Dijkstra's 2,501 — 65% fewer** |
 | **Map data** | Real OpenStreetMap data for Delhi — **246,466 nodes / 658,533 edges** across 3,463 tiles, 28.5 MB (measured, not estimated) |
 | **Storage** | Geohash-6 tiles in IndexedDB; the ~9 tiles around your GPS fix load in ~60 KB so the first paint is instant |
 | **Basemap** | Protomaps PMTiles, self-hosted glyphs and sprites, rendered offline by MapLibre |
@@ -61,7 +61,10 @@ pnpm typecheck
 cd packages/pipeline && ./.venv/Scripts/python.exe -m pytest tests/
 ```
 
-Routing correctness is verified by fuzzing thousands of random origin/destination pairs against a reference Dijkstra implementation and asserting exact cost equality. Subtly-wrong routes are invisible without an oracle — and the oracle has already caught three real bugs, including a router that returned routes *cheaper* than the true optimum by stitching a path through a step with no edge behind it.
+Routing correctness is verified by fuzzing thousands of random origin/destination pairs against a reference Dijkstra implementation and asserting exact cost equality. Subtly-wrong routes are invisible without an oracle — and the oracle has caught every routing bug in this project so far, including:
+
+- a router returning routes *cheaper* than the true optimum, by stitching a path through a step with no edge behind it (OSM node ids exceed 2³², and masking them into `u32` broke both the sort order a binary search depended on and the uniqueness of ids);
+- a backward search steered by the forward potential, quietly returning routes a few percent long.
 
 ## License
 

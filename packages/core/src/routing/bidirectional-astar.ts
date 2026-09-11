@@ -76,6 +76,14 @@ interface SearchState {
   readonly distance: number[];
   readonly parent: number[];
   readonly settled: boolean[];
+  /**
+   * Sign applied to the shared potential: +1 forward, -1 backward.
+   *
+   * The balanced scheme requires `p_f(v) + p_b(v) == 0` at every node. Carrying
+   * the sign on the state makes that structural -- a key cannot be built
+   * without choosing a side.
+   */
+  readonly sign: 1 | -1;
 }
 
 /**
@@ -121,15 +129,16 @@ export function route(
   for (const geohash of tiles.loaded) capacity += tiles.get(geohash)!.nodeCount;
   capacity = Math.max(capacity, 2);
 
-  const makeState = (): SearchState => ({
+  const makeState = (sign: 1 | -1): SearchState => ({
     heap: new MinHeap(capacity),
     distance: [],
     parent: [],
     settled: [],
+    sign,
   });
 
-  const forward = makeState();
-  const backward = makeState();
+  const forward = makeState(1);
+  const backward = makeState(-1);
 
   const intern = (id: number): number => {
     let index = indexOf.get(id);
@@ -200,9 +209,19 @@ export function route(
     ),
   );
 
-  /** Key in doubled units: 2*distance + doubledPotential + offset. */
-  const toKey = (distance: number, id: number): number => {
-    const key = 2 * distance + doublePotential(id) + keyOffset;
+  /**
+   * Key in doubled units: `2*distance + sign*doublePotential + offset`.
+   *
+   * The sign is what makes the scheme balanced. Applying the forward potential
+   * to both searches -- which this code did until BUG-009 -- steers the backward
+   * search toward the target it started from instead of toward the source, so
+   * `p_f + p_b` comes out as `2*p_f` rather than 0. The termination bound then
+   * compares against frontier keys that do not mean what it assumes, and the
+   * search stops believing it is done while a cheaper path is still open. That
+   * produced routes a fraction of a percent long: always dearer, never cheaper.
+   */
+  const toKey = (state: SearchState, distance: number, id: number): number => {
+    const key = 2 * distance + state.sign * doublePotential(id) + keyOffset;
     if (key < 0) {
       // The offset is meant to make this impossible. If it ever fires, the
       // bound above is wrong -- fail loudly rather than clamping and silently
@@ -212,8 +231,8 @@ export function route(
     return key;
   };
 
-  forward.heap.push(sourceIndex, toKey(0, source));
-  backward.heap.push(targetIndex, toKey(0, target));
+  forward.heap.push(sourceIndex, toKey(forward, 0, source));
+  backward.heap.push(targetIndex, toKey(backward, 0, target));
 
   /** Best complete path cost found so far. */
   let mu = Number.POSITIVE_INFINITY;
@@ -260,7 +279,7 @@ export function route(
       if (candidate < state.distance[neighbourIndex]!) {
         state.distance[neighbourIndex] = candidate;
         state.parent[neighbourIndex] = currentIndex;
-        state.heap.push(neighbourIndex, toKey(candidate, edge.target));
+        state.heap.push(neighbourIndex, toKey(state, candidate, edge.target));
       }
 
       // Join through this neighbour if the opposite search has already settled
