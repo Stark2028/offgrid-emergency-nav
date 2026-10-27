@@ -13,6 +13,7 @@ in ~60 KB.
 
 from __future__ import annotations
 
+import math
 # Standard geohash alphabet: base32 with 'a', 'i', 'l', 'o' removed to avoid
 # visually confusable characters.
 BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
@@ -27,6 +28,10 @@ def encode(lat: float, lon: float, precision: int = 6) -> str:
     Interleaves longitude and latitude bits (longitude first), packing five
     bits per output character.
     """
+    if not math.isfinite(lat) or not math.isfinite(lon) or abs(lat) > 90 or abs(lon) > 180:
+        raise ValueError("geohash coordinates must be finite and within geographic bounds")
+    if not isinstance(precision, int) or isinstance(precision, bool) or not 1 <= precision <= 12:
+        raise ValueError("geohash precision must be an integer from 1 to 12")
     lat_lo, lat_hi = LAT_MIN, LAT_MAX
     lon_lo, lon_hi = LON_MIN, LON_MAX
 
@@ -70,6 +75,8 @@ def bounds(geohash: str) -> tuple[float, float, float, float]:
     Used to write each tile's bbox into its header, which the runtime reads to
     pick the tiles intersecting a route corridor.
     """
+    if not 1 <= len(geohash) <= 12:
+        raise ValueError("geohash length must be from 1 to 12")
     lat_lo, lat_hi = LAT_MIN, LAT_MAX
     lon_lo, lon_hi = LON_MIN, LON_MAX
     even = True

@@ -52,6 +52,10 @@ class TestSpeedBound:
 
 
 class TestParseMaxspeed:
+    @pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf", "Infinity", "   ", "50 knots", "50 mph extra"])
+    def test_malformed_speed_falls_through(self, raw: str) -> None:
+        assert parse_maxspeed(raw) is None
+
     def test_bare_number_is_kph(self) -> None:
         assert parse_maxspeed("50") == 50.0
 
@@ -105,6 +109,19 @@ class TestOneway:
 
 
 class TestRoutability:
+    @pytest.mark.parametrize("tags, expected", [
+        ({"vehicle": "no"}, False),
+        ({"vehicle": "private"}, False),
+        ({"access": "no", "vehicle": "yes"}, True),
+        ({"access": "yes", "vehicle": "no"}, False),
+        ({"vehicle": "no", "motor_vehicle": "yes"}, True),
+        ({"vehicle": "yes", "motor_vehicle": "no"}, False),
+        ({"access": "no", "motor_vehicle": "unknown"}, False),
+        ({"vehicle": " NO "}, False),
+    ])
+    def test_access_hierarchy(self, tags: dict[str, str], expected: bool) -> None:
+        assert is_routable({"highway": "residential", **tags}) is expected
+
     @pytest.mark.parametrize("highway", list(HIGHWAY_SPEEDS))
     def test_every_speed_table_entry_is_routable(self, highway: str) -> None:
         assert is_routable({"highway": highway})

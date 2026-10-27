@@ -95,6 +95,45 @@ describe("reference Dijkstra", () => {
 });
 
 describe("bidirectional A*", () => {
+  it.each(CASES)("matches the oracle with asymmetric hazard penalties: %s", (name) => {
+    const tiles = loadSet(name);
+    const edgeCost = (from: number, to: number, weight: number): number =>
+      weight * (1 + ((from * 7 + to * 13) % 20));
+    for (const [from, to] of expectedPairs(name)) {
+      const actual = route(tiles, from, to, { edgeCost });
+      const reference = dijkstra(tiles, from, to, { edgeCost });
+      expect(actual?.cost, `${name}: ${from}->${to}`).toBe(reference?.cost);
+    }
+  });
+
+  it.each([NaN, Infinity, -1, 0, 0.5, 21])("rejects invalid hazard weight factor %s", (factor) => {
+    expect(() => route(loadSet("grid"), 1, 16, {
+      edgeCost: (_from, _to, weight) => weight * factor,
+    })).toThrow(/edgeCost/);
+  });
+
+  it.each([NaN, -1, 1.5, -Infinity])("rejects invalid search budget %s", (maxSettled) => {
+    expect(() => route(loadSet("grid"), 1, 16, { maxSettled })).toThrow(/maxSettled/);
+  });
+
+  it("distinguishes a stopped search from an unreachable destination", () => {
+    const result = route(loadSet("grid"), 1, 16, { maxSettled: 0 });
+    expect(result).toMatchObject({ status: "budget-exceeded", path: [], cost: Infinity, settled: 0 });
+    expect(route(loadSet("grid"), 1, 16)?.status).toBe("complete");
+  });
+
+  it("marks a partial search with an unloaded endpoint as missing tiles", () => {
+    const tiles = loadSet("grid");
+    const first = tiles.get(tiles.loaded[0]!)!;
+    const haloSlot = [...first.flags.keys()].find((slot) => first.isHalo(slot))!;
+    const localSlot = [...first.flags.keys()].find((slot) => !first.isHalo(slot))!;
+    const partial = new TileSet();
+    partial.add(first);
+    const result = route(partial, first.globalIds[localSlot]!, first.globalIds[haloSlot]!);
+    expect(result?.status).toBe("missing-tiles");
+    expect(result?.missing).toContain(partial.unresolved(first.globalIds[haloSlot]!)!.geohash);
+  });
+
   it.each(CASES)("agrees with the fixture's independent costs: %s", (name) => {
     const tiles = loadSet(name);
     for (const [from, to, expected] of expectedPairs(name)) {
@@ -240,6 +279,17 @@ describe("bidirectional A*", () => {
 });
 
 describe("multi-target search (escape routing)", () => {
+  it("uses original edge direction for hazards in reverse searches", () => {
+    const tiles = loadSet("escape");
+    const edgeCost = (from: number, to: number, weight: number): number =>
+      weight * (1 + ((from * 7 + to * 13) % 20));
+    const costs = dijkstraFrom(tiles, index.escape.exits, "reverse", { edgeCost });
+    for (const from of index.escape.real) {
+      const expected = Math.min(...index.escape.exits.map((to) =>
+        dijkstra(tiles, from, to, { edgeCost })?.cost ?? Infinity));
+      expect(costs.get(from)?.cost).toBe(expected);
+    }
+  });
   it("finds the cost to the nearest exit, not an arbitrary one", () => {
     const tiles = loadSet("escape");
     const exits = index.escape.exits;

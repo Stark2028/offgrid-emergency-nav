@@ -37,6 +37,8 @@ import { MinHeap } from "./heap.js";
 const NO_PARENT = -1;
 
 export interface RouteResult {
+  /** Whether optimality was established on the loaded graph and all needed tiles were present. */
+  readonly status: "complete" | "missing-tiles" | "budget-exceeded";
   /** Total path cost in the integer weight units of format.ts. */
   readonly cost: number;
   /** Global node ids from source to target inclusive. */
@@ -60,6 +62,8 @@ export interface RouteOptions {
    * Per-edge cost multiplier. This is how hazards enter routing: a reported
    * barricade scales nearby edges rather than deleting them.
    *
+   * Receives the edge in original travel direction, including in backward search.
+   * Must be deterministic during a query and return a safe integer in [weight, 20 * weight].
    * Must never *lower* a weight below the raw value. The heuristic assumes
    * edges cost at least their stored weight, so a discount breaks admissibility
    * and the router starts returning suboptimal routes.
@@ -98,11 +102,16 @@ export function route(
   target: number,
   options: RouteOptions = {},
 ): RouteResult | undefined {
+  const maxSettled = options.maxSettled ?? Number.POSITIVE_INFINITY;
+  if (maxSettled !== Number.POSITIVE_INFINITY &&
+      (!Number.isSafeInteger(maxSettled) || maxSettled < 0)) {
+    throw new RangeError("maxSettled must be a non-negative safe integer or Infinity");
+  }
   if (tiles.resolve(source) === undefined) return undefined;
   if (tiles.resolve(target) === undefined) return undefined;
 
   if (source === target) {
-    return { cost: 0, path: [source], settled: 0, missing: [] };
+    return { status: "complete", cost: 0, path: [source], settled: 0, missing: [] };
   }
 
   // Different components means no path at all — an O(1) answer instead of
@@ -118,12 +127,15 @@ export function route(
   if (!sourcePos || !targetPos) return undefined;
 
   const edgeCost = options.edgeCost;
-  const maxSettled = options.maxSettled ?? Number.POSITIVE_INFINITY;
 
   // Global ids are sparse; searches index by dense slot assigned on first sight.
   const indexOf = new Map<number, number>();
   const globalId: number[] = [];
   const missing = new Set<string>();
+  for (const id of [source, target]) {
+    const unresolved = tiles.unresolved(id);
+    if (unresolved) missing.add(unresolved.geohash);
+  }
 
   let capacity = 0;
   for (const geohash of tiles.loaded) capacity += tiles.get(geohash)!.nodeCount;
@@ -143,6 +155,10 @@ export function route(
   const intern = (id: number): number => {
     let index = indexOf.get(id);
     if (index === undefined) {
+      // A frontier may stop on the mu bound before a discovered halo is popped.
+      // Record it now so missing data can never look like proven completeness.
+      const unresolved = tiles.unresolved(id);
+      if (unresolved) missing.add(unresolved.geohash);
       index = globalId.length;
       indexOf.set(id, index);
       globalId.push(id);
@@ -270,7 +286,15 @@ export function route(
     if (unresolved) missing.add(unresolved.geohash);
 
     for (const edge of tiles.edges(currentId, direction)) {
-      const weight = edgeCost ? edgeCost(currentId, edge.target, edge.weight) : edge.weight;
+      // Reverse CSR describes target -> current in the original road graph.
+      const weight = edgeCost
+        ? direction === "forward"
+          ? edgeCost(currentId, edge.target, edge.weight)
+          : edgeCost(edge.target, currentId, edge.weight)
+        : edge.weight;
+      if (!Number.isSafeInteger(weight) || weight < edge.weight || weight > 20 * edge.weight) {
+        throw new RangeError("edgeCost must return a safe integer between the base weight and 20 times it");
+      }
       const candidate = currentDistance + weight;
 
       const neighbourIndex = intern(edge.target);
@@ -320,9 +344,8 @@ export function route(
     return true;
   };
 
+  let budgetExceeded = false;
   while (!forward.heap.isEmpty() && !backward.heap.isEmpty()) {
-    if (settledCount >= maxSettled) break;
-
     const topF = forward.heap.peekPriority()!;
     const topB = backward.heap.peekPriority()!;
 
@@ -331,6 +354,10 @@ export function route(
     // is compared against 2*mu rather than dividing and losing the exactness
     // the doubling was introduced to preserve.
     if (topF + topB - 2 * keyOffset >= 2 * mu) break;
+    if (settledCount >= maxSettled) {
+      budgetExceeded = true;
+      break;
+    }
 
     // Expand whichever side is cheaper to advance — keeps the frontiers
     // balanced when one direction branches more than the other.
@@ -346,6 +373,7 @@ export function route(
   // So `missing` is reported as advice, never as a reason to discard a result.
   if (meetingIndex >= 0 && Number.isFinite(mu)) {
     return {
+      status: budgetExceeded ? "budget-exceeded" : missing.size > 0 ? "missing-tiles" : "complete",
       cost: mu,
       path: joinPaths(
         forward,
@@ -362,8 +390,9 @@ export function route(
 
   // No path found. If tiles were wanted, say so: the caller can load them and
   // retry. Returning a zero-cost empty route here would read as free travel.
-  if (missing.size > 0) {
+  if (missing.size > 0 || budgetExceeded) {
     return {
+      status: budgetExceeded ? "budget-exceeded" : "missing-tiles",
       cost: Number.POSITIVE_INFINITY,
       path: [],
       settled: settledCount,
