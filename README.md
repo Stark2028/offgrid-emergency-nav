@@ -4,9 +4,9 @@
 
 During internet blackouts, natural disasters, or mass protests, cellular networks are jammed or severed and centralised navigation fails — Google Maps needs a server roundtrip to compute a route, and has no way to tell civilians about barricades, blocked roads, or hazards on the ground.
 
-OffGrid computes routes entirely on-device from a local road graph, and shares hazard reports between nearby devices with no infrastructure at all.
+OffGrid's implemented core computes routes from a local road graph. The planned application will run it on-device and share hazard reports between nearby devices without central infrastructure.
 
-> **Status: in development.** The graph and routing core is built first and verified against a reference implementation, before any UI exists. All 206 tests pass, including a 2,000-pair fuzz against real Delhi data. No UI yet.
+> **Status: routing prototype; not field-ready.** The core and Python pipeline are implemented; no application, offline map storage, or hazard transport ships yet. The latest local checks pass **139 TypeScript tests and 152 Python tests**; four real-Delhi tests are skipped when the generated dataset is absent. See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for fixed defects, verification limits, and release blockers.
 >
 > Contributors — including AI assistants — should read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before touching routing, the tile format, or the mesh design. It records the decisions that must not be silently reversed and the fixes that were tried and were wrong.
 
@@ -18,9 +18,9 @@ OffGrid computes routes entirely on-device from a local road graph, and shares h
 |---|---|
 | **Routing** | Bidirectional A\* over a CSR-encoded road graph in flat typed arrays. Measured on real Delhi data: **872 nodes settled vs Dijkstra's 2,501 — 65% fewer** |
 | **Map data** | Real OpenStreetMap data for Delhi — **246,466 nodes / 658,533 edges** across 3,463 tiles, 28.5 MB (measured, not estimated) |
-| **Storage** | Geohash-6 tiles in IndexedDB; the ~9 tiles around your GPS fix load in ~60 KB so the first paint is instant |
-| **Basemap** | Protomaps PMTiles, self-hosted glyphs and sprites, rendered offline by MapLibre |
-| **Hazards** | Ed25519-signed reports with graduated trust, shared peer-to-peer |
+| **Storage (planned)** | Geohash-6 tiles in IndexedDB, downloaded and verified before offline use |
+| **Basemap (planned)** | Protomaps PMTiles, self-hosted glyphs and sprites, rendered offline by MapLibre |
+| **Hazards (planned)** | Ed25519-signed reports with graduated trust, shared peer-to-peer |
 | **Backend** | None. Static files on a CDN — a tool built for infrastructure failure shouldn't depend on infrastructure |
 
 ## Engineering notes
@@ -48,17 +48,20 @@ apps/web/            React + TypeScript + Vite. Not started yet — empty stub.
 
 ## Development
 
-Requires Node 20+ and pnpm.
+Requires Node 22.12+ and pnpm.
 
 ```bash
 pnpm install
 pnpm test          # unit + fuzz tests
 pnpm typecheck
+pnpm build         # emits core JavaScript and declarations
+pnpm test:build    # imports the package in plain Node
 ```
 
 ```bash
 # Python pipeline tests
-cd packages/pipeline && ./.venv/Scripts/python.exe -m pytest tests/
+python -m pip install -r packages/pipeline/requirements-dev.txt
+python -m pytest packages/pipeline/tests
 ```
 
 Routing correctness is verified by fuzzing thousands of random origin/destination pairs against a reference Dijkstra implementation and asserting exact cost equality. Subtly-wrong routes are invisible without an oracle — and the oracle has caught every routing bug in this project so far, including:

@@ -42,9 +42,15 @@ Companion documents:
 
 ---
 
-## Open bugs
+## Current review ? 2026-10-27
 
-None. All 206 tests pass (88 TypeScript, 118 Python).
+See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for the full audit and release blockers. The previous "no open bugs" statement described historical fixture runs, not production readiness.
+
+This pass fixes reverse hazard callback direction, u32 heap-priority overflow, ambiguous budget exhaustion, unchecked hazard costs, malformed tile ingestion, conflicting tile ownership, parallel-road geometry sharing, silent serializer truncation/clamping, vehicle access precedence, and invalid geographic/speed inputs. The graph layout remains v2; regenerate data for corrected access and geometry. Integer edge weights, balanced potentials, oracle independence, capped advisory hazards, and the existing feature deferrals remain intact.
+
+Local results: 139 TypeScript tests and 152 Python tests pass; four real-data tests skip without the generated Delhi dataset. Type checking, emitted ESM/declaration build, public-package import smoke test, and npm audit pass. Fixture regeneration changed the two ladder binaries because parallel shapes are now distinct. No new performance or field-readiness claim is made.
+
+CI now covers both languages and fixture drift. Core exports target generated `dist` files; consumers must build first. `RouteResult.status` distinguishes complete, missing-tiles, and budget-exceeded results; a returned path alone no longer implies a completed search.
 
 ## Fixed bugs
 
