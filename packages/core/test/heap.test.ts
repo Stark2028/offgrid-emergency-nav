@@ -14,6 +14,27 @@ function makeRng(seed: number): () => number {
 }
 
 describe("MinHeap", () => {
+  it("orders accumulated costs above the u32 boundary without wrapping", () => {
+    const heap = new MinHeap(3);
+    heap.push(0, 2 ** 32 + 1);
+    heap.push(1, 100);
+    heap.push(2, 2 ** 33);
+    expect(heap.priorityOf(0)).toBe(2 ** 32 + 1);
+    expect([heap.pop(), heap.pop(), heap.pop()]).toEqual([1, 0, 2]);
+  });
+
+  it.each([NaN, Infinity, -1, 0.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid priority %s", (priority) => {
+    expect(() => new MinHeap(2).push(0, priority)).toThrow(/priority/);
+  });
+
+  it.each([-1, 2, 0.5, NaN])("rejects out-of-range node %s without corrupting the heap", (id) => {
+    const heap = new MinHeap(2);
+    expect(heap.has(id)).toBe(false);
+    expect(heap.priorityOf(id)).toBeUndefined();
+    expect(() => heap.push(id, 1)).toThrow(/node id/);
+    expect(heap.size).toBe(0);
+  });
+
   it("pops in ascending priority order", () => {
     const heap = new MinHeap(8);
     heap.push(3, 30);

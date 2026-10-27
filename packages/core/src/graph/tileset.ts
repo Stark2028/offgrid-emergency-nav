@@ -57,7 +57,16 @@ export class TileSet {
 
   add(tile: Tile): void {
     const existing = this.tiles.get(tile.geohash);
-    if (existing) return; // already resident; tiles are immutable
+    if (existing === tile) return;
+    if (existing) throw new Error(`tile ${tile.geohash} is already loaded; remove it before replacement`);
+
+    // Validate the entire addition before mutating either index.
+    for (let slot = 0; slot < tile.nodeCount; slot++) {
+      const id = tile.globalIds[slot]!;
+      if (!tile.isHalo(slot) && this.owners.has(id)) {
+        throw new Error(`conflicting owner for node ${id}; tiles may come from different builds`);
+      }
+    }
 
     this.tiles.set(tile.geohash, tile);
     for (let slot = 0; slot < tile.nodeCount; slot++) {

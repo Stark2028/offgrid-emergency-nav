@@ -43,6 +43,12 @@ describe("geohash cross-language agreement", () => {
 });
 
 describe("encodeGeohash", () => {
+  it.each([NaN, Infinity, 0, -1, 1.5, 13])("rejects invalid precision %s", (precision) => {
+    expect(() => encodeGeohash(28.6, 77.2, precision)).toThrow(/precision/);
+  });
+  it.each([[NaN, 0], [0, Infinity], [91, 0], [0, -181]])("rejects invalid coordinate %s,%s", (lat, lon) => {
+    expect(() => encodeGeohash(lat!, lon!)).toThrow(/coordinates/);
+  });
   it("reproduces the canonical reference vector", () => {
     expect(encodeGeohash(57.64911, 10.40744, 6)).toBe("u4pruy");
   });
@@ -125,6 +131,14 @@ describe("geohashNeighbours", () => {
 });
 
 describe("geohashesInBounds", () => {
+  it("rejects excessive work before enumerating a global high precision query", () => {
+    expect(() => geohashesInBounds({ minLat: -90, maxLat: 90, minLon: -180, maxLon: 180 }, 12))
+      .toThrow(/100000/);
+  });
+  it("rejects inverted and non-finite bounds", () => {
+    expect(() => geohashesInBounds({ minLat: 1, maxLat: 0, minLon: 0, maxLon: 1 })).toThrow(/ordered/);
+    expect(() => geohashesInBounds({ minLat: 0, maxLat: NaN, minLon: 0, maxLon: 1 })).toThrow(/coordinates/);
+  });
   it("covers a small box with the cell containing it", () => {
     const hash = encodeGeohash(28.6315, 77.2167);
     const box = geohashBounds(hash);

@@ -2,7 +2,7 @@
 
 End-to-end plan, from scaffold to deployed product. Reflects the state of the repo, not the original proposal — several items changed once real data and real browser constraints got involved.
 
-**Status:** Phase 1 complete, Phase 2 core complete. **206 of 206 tests passing** (88 TypeScript, 118 Python), including a 2,000-pair fuzz against real Delhi tiles. No known open bugs — see [ENGINEERING_LOG.md](ENGINEERING_LOG.md).
+**Status:** Routing prototype with a production hardening pass. Latest local checks: **139 TypeScript + 152 Python tests passing**, with four real-data tests skipped because generated tiles are absent. CI and an emitted core package are now implemented. No app or native mesh exists. See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for current evidence and ordered release blockers; historical measurements below predate this review.
 
 **First measured benchmark:** bidirectional A\* settles **872 nodes vs Dijkstra's 2,501 — 65% fewer** across 420 routable pairs on real data.
 
@@ -33,8 +33,8 @@ Two questions that can kill the project. Answer before building on top of them.
 - [x] Python venv, pinned requirements
 - [x] `.gitignore` / `.gitattributes` (LF normalisation, binaries, generated files)
 - [x] Public GitHub repo, pushed
-- [ ] **`packages/core/src/index.ts`** — `package.json` `main` points at a file that does not exist. Harmless today (tests import deep paths) but breaks the moment `apps/web` imports `@offgrid/core`
-- [ ] CI — GitHub Actions running both test suites on push
+- [x] Core barrel and emitted exports — JavaScript and declarations in `dist`, verified by a plain-Node import test
+- [x] CI — GitHub Actions for both suites, type checking, package build/imports, fixture regeneration, and dependency audit
 - [ ] Linting — ESLint + Prettier (TS), ruff (Python)
 
 ### OSM pipeline
@@ -216,7 +216,7 @@ The same codebase ships twice. Not a compromise — two genuinely different prod
 | `apps/web` is an empty stub | No `package.json`; workspace resolves 2 projects, not 3 |
 | Turn restrictions ignored | Routes may suggest illegal turns |
 | Tile compression | 28.5 MB uncompressed; gzip/brotli would likely halve it. Deferred until real-device storage testing |
-| No CI | Tests only run locally |
+| CI | Implemented; hosted results must be checked per revision |
 | No linting | No ESLint/Prettier/ruff |
 | iOS is a hard target | No Web Bluetooth ever; aggressive storage eviction |
 | Graph is 246k nodes, not the planned ~61k | Not a defect — we cover ~2,600 km² incl. Gurgaon/Noida vs the 1,484 km² NCT, and 167k are genuine 3-way junctions. The estimate measured a narrower network |

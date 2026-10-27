@@ -1,0 +1,2 @@
+# Pipeline tests use only the standard library and pytest; no OSM download needed.
+pytest==9.1.1

@@ -2,8 +2,8 @@
  * Reading one binary tile.
  *
  * Typed-array views over the tile's ArrayBuffer — no copying, no parsing step.
- * A tile arrives from IndexedDB as a buffer and becomes queryable immediately,
- * which is what keeps first paint under the ~50ms budget.
+ * Construction validates the layout and graph records once before use.
+ * Treat the input buffer and exposed array views as immutable after validation.
  *
  * Layout is defined in format.ts and written by packages/pipeline/tiles.py.
  */
@@ -84,6 +84,62 @@ export class Tile {
     this.revGeometry = take((b, o, n) => new Uint32Array(b, o, n), revEdgeCount, 4);
 
     this.geometry = new DataView(buffer, this.header.geometryOffset, this.header.geometryBytes);
+    this.validate();
+  }
+
+  /** Validate once at ingestion, before malformed graph data reaches a search. */
+  private validate(): void {
+    const validPosition = (lat: number, lon: number): boolean =>
+      Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+    for (let slot = 0; slot < this.nodeCount; slot++) {
+      if (!validPosition(this.lat[slot]!, this.lon[slot]!)) throw new Error("invalid tile node coordinate");
+      if (slot > 0 && this.globalIds[slot]! <= this.globalIds[slot - 1]!) {
+        throw new Error("tile node ids must be strictly ascending");
+      }
+      if ((this.flags[slot]! & ~(NODE_FLAG_HALO | NODE_FLAG_JUNCTION)) !== 0) {
+        throw new Error("invalid tile node flags");
+      }
+    }
+
+    // Only record starts are valid references, never the middle of a point.
+    const geometryStarts = new Set<number>();
+    let cursor = 0;
+    while (cursor < this.geometry.byteLength) {
+      if (cursor + 2 > this.geometry.byteLength) throw new Error("truncated tile geometry");
+      geometryStarts.add(cursor);
+      const count = this.geometry.getUint16(cursor, true);
+      const end = cursor + 2 + count * 8;
+      if (end > this.geometry.byteLength) throw new Error("truncated tile geometry points");
+      for (let point = cursor + 2; point < end; point += 8) {
+        if (!validPosition(this.geometry.getFloat32(point, true), this.geometry.getFloat32(point + 4, true))) {
+          throw new Error("invalid tile geometry coordinate");
+        }
+      }
+      cursor = end;
+    }
+    for (const [offsets, targets, weights, geometries] of [
+      [this.fwdOffset, this.fwdTarget, this.fwdWeight, this.fwdGeometry],
+      [this.revOffset, this.revTarget, this.revWeight, this.revGeometry],
+    ] as const) {
+      if (offsets[0] !== 0 || offsets[this.nodeCount] !== targets.length) {
+        throw new Error("invalid tile CSR sentinel");
+      }
+      for (let slot = 0; slot < this.nodeCount; slot++) {
+        if (offsets[slot]! > offsets[slot + 1]! || offsets[slot + 1]! > targets.length) {
+          throw new Error("invalid tile CSR offsets");
+        }
+        if (this.isHalo(slot) && offsets[slot] !== offsets[slot + 1]) {
+          throw new Error("tile halo must not carry adjacency");
+        }
+      }
+      for (let edge = 0; edge < targets.length; edge++) {
+        if (targets[edge]! >= this.nodeCount) throw new Error("invalid tile edge target");
+        if (weights[edge] === 0) throw new Error("invalid tile edge weight");
+        if (!geometryStarts.has(geometries[edge]! & GEOMETRY_OFFSET_MASK)) {
+          throw new Error("invalid tile geometry reference");
+        }
+      }
+    }
   }
 
   get geohash(): string {

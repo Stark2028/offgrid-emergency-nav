@@ -14,6 +14,7 @@ review:
 
 from __future__ import annotations
 
+import math
 from typing import Final
 
 # Must match MAX_SPEED_MPS in packages/core/src/geo/distance.ts
@@ -72,13 +73,14 @@ def is_routable(tags: dict[str, str]) -> bool:
     if highway not in HIGHWAY_SPEEDS:
         return False
 
-    # A blanket access ban blocks the way unless motor traffic is re-permitted.
-    if tags.get("access") in BLOCKED_ACCESS:
-        if tags.get("motor_vehicle") not in {"yes", "designated", "permissive"}:
+    # The most specific recognised mode wins: motor_vehicle > vehicle > access.
+    # Unknown values must not erase a broader explicit ban.
+    for key in ("motor_vehicle", "vehicle", "access"):
+        value = tags.get(key, "").strip().lower()
+        if value in BLOCKED_ACCESS:
             return False
-
-    if tags.get("motor_vehicle") in BLOCKED_ACCESS:
-        return False
+        if value in {"yes", "designated", "permissive"}:
+            break
 
     # Ways under construction or proposed are not on the ground yet.
     if highway in {"construction", "proposed"}:
@@ -112,7 +114,10 @@ def parse_maxspeed(raw: str | None) -> float | None:
     except (ValueError, IndexError):
         return None
 
-    if magnitude <= 0:
+    if not math.isfinite(magnitude) or magnitude <= 0:
+        return None
+
+    if len(parts) > 2 or (len(parts) == 2 and parts[1] not in {"mph", "km/h", "kph"}):
         return None
 
     if len(parts) > 1 and parts[1] == "mph":

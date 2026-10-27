@@ -34,3 +34,6 @@ Thumbs.db
 # Test/bench artifacts
 coverage/
 bench-results/
+.pytest_cache/
+pytest-cache-files-*/
+.test-tmp/

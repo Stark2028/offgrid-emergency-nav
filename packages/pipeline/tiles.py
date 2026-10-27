@@ -160,7 +160,10 @@ def _serialise_tile(
         lat += struct.pack("<f", node.lat)
         lon += struct.pack("<f", node.lon)
         global_ids += struct.pack("<I", dense_of[node_id])
-        component_ids += struct.pack("<H", min(components.get(node_id, 0), 0xFFFF))
+        component = components[node_id]
+        if not 0 <= component <= 0xFFFF:
+            raise ValueError("component id exceeds tile format capacity")
+        component_ids += struct.pack("<H", component)
 
         flag = 0
         if owner[node_id] != cell:
@@ -179,11 +182,11 @@ def _serialise_tile(
         if owner[edge.target] == cell:
             incoming[edge.target].append(edge)
 
-    # Shapes are interned by the unordered node pair, so a two-way road's two
+    # Shapes are interned by unordered node pair and canonical geometry, so a two-way road's two
     # Edge objects — which are distinct objects carrying mirrored shapes — share
     # one stored copy and differ only in their direction tag.
     geometry = bytearray()
-    shape_offsets: dict[tuple[int, int], int] = {}
+    shape_offsets: dict[tuple[int, int, tuple[tuple[float, float], ...]], int] = {}
 
     fwd_offsets, fwd_targets, fwd_weights, fwd_geometry = _pack_adjacency(
         ordered, outgoing, slot_of, geometry, shape_offsets, reverse=False
@@ -252,7 +255,7 @@ def _pack_adjacency(
     adjacency: dict[int, list[Edge]],
     slot_of: dict[int, int],
     geometry: bytearray,
-    shape_offsets: dict[tuple[int, int], int],
+    shape_offsets: dict[tuple[int, int, tuple[tuple[float, float], ...]], int],
     *,
     reverse: bool,
 ) -> tuple[bytearray, bytearray, bytearray, bytearray]:
@@ -273,7 +276,9 @@ def _pack_adjacency(
         for edge in adjacency.get(node_id, []):
             far = edge.source if reverse else edge.target
             targets += struct.pack("<I", slot_of[far])
-            weights += struct.pack("<I", min(edge.weight, 0xFFFFFFFF))
+            if not 1 <= edge.weight <= 0xFFFFFFFF:
+                raise ValueError("edge weight exceeds tile format capacity")
+            weights += struct.pack("<I", edge.weight)
             geometry_refs += struct.pack(
                 "<I", _geometry_ref(geometry, shape_offsets, edge, reverse=reverse)
             )
@@ -285,7 +290,7 @@ def _pack_adjacency(
 
 def _geometry_ref(
     geometry: bytearray,
-    shape_offsets: dict[tuple[int, int], int],
+    shape_offsets: dict[tuple[int, int, tuple[tuple[float, float], ...]], int],
     edge: Edge,
     *,
     reverse: bool,
@@ -297,14 +302,16 @@ def _geometry_ref(
     two edges share one copy — the shape is the same physical road either way.
     Storing both cost 40% of tile size, half of it redundant.
 
-    Interning is keyed on the unordered node pair rather than object identity:
+    Interning is keyed on the unordered node pair and shape rather than object identity:
     GraphBuilder creates a separate Edge for each direction, so identity never
-    matches. The stored copy is always oriented low-id to high-id, and any edge
+    matches. Parallel roads retain distinct shapes. The stored copy is always oriented low-id to high-id, and any edge
     running the other way carries the reversed tag — which is independent of
     whether this is the forward or reverse CSR.
     """
-    key = (min(edge.source, edge.target), max(edge.source, edge.target))
     stored_forward = edge.source <= edge.target
+    shape = edge.shape if stored_forward else list(reversed(edge.shape))
+    # Parallel roads may have the same endpoints but different interior shapes.
+    key = (min(edge.source, edge.target), max(edge.source, edge.target), tuple(shape))
 
     offset = shape_offsets.get(key)
     if offset is None:
@@ -312,8 +319,10 @@ def _geometry_ref(
         shape_offsets[key] = offset
 
         # Orient the stored copy low-id to high-id, whichever edge got here first.
-        shape = edge.shape if stored_forward else list(reversed(edge.shape))
-        shape = shape[:0xFFFF]
+        if len(shape) > 0xFFFF:
+            raise ValueError("edge geometry exceeds tile format capacity")
+        if offset > GEOMETRY_OFFSET_MASK:
+            raise ValueError("geometry offset exceeds tile format capacity")
         geometry += struct.pack("<H", len(shape))
         for point_lat, point_lon in shape:
             geometry += struct.pack("<ff", point_lat, point_lon)

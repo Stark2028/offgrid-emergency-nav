@@ -214,7 +214,11 @@ export function dijkstraFrom(
     });
 
     for (const edge of tiles.edges(currentId, direction)) {
-      const weight = edgeCost ? edgeCost(currentId, edge.target, edge.weight) : edge.weight;
+      const weight = edgeCost
+        ? direction === "forward"
+          ? edgeCost(currentId, edge.target, edge.weight)
+          : edgeCost(edge.target, currentId, edge.weight)
+        : edge.weight;
       const candidate = currentDistance + weight;
 
       const neighbourIndex = intern(edge.target);
