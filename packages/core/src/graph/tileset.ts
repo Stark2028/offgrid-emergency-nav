@@ -32,6 +32,9 @@ export interface UnresolvedNode {
   readonly lon: number;
 }
 
+/** Read-only routing view, allowing coverage restrictions without changing search. */
+export type RoutingGraph = Pick<TileSet, 'resolve' | 'position' | 'component' | 'unresolved' | 'loaded' | 'get' | 'edges'>;
+
 export class TileSet {
   private readonly tiles = new Map<string, Tile>();
 

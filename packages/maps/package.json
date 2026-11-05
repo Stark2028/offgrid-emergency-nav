@@ -1,0 +1,16 @@
+{
+  "name": "@offgrid/maps",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": { "@offgrid/core": "workspace:*", "idb": "^8.0.3" },
+  "devDependencies": { "@types/node": "^22.10.2", "typescript": "^5.7.2", "vitest": "^4.1.12", "fake-indexeddb": "^6.2.4" }
+}

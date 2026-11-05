@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import geohash
-from graph import Edge, Node
+from graph import Edge, Node, canonical_coordinate
 
 TILE_MAGIC = 0x4F475254  # "OGRT"
 # Keep in step with TILE_VERSION in packages/core/src/graph/format.ts.
@@ -68,7 +68,7 @@ def pack_geohash(value: str) -> tuple[int, int]:
 def assign_tiles(nodes: dict[int, Node]) -> dict[int, str]:
     """Map each node to the geohash-6 cell that owns it."""
     return {
-        node_id: geohash.encode(node.lat, node.lon, TILE_PRECISION)
+        node_id: geohash.encode(canonical_coordinate(node.lat), canonical_coordinate(node.lon), TILE_PRECISION)
         for node_id, node in nodes.items()
     }
 

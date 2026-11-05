@@ -16,7 +16,9 @@ import {
   NODE_FLAG_JUNCTION,
   readHeader,
   type TileHeader,
+  WEIGHT_SCALE,
 } from "./format.js";
+import { heuristicWeight } from "../geo/distance.js";
 
 /** Interior shape of one edge — the points between its endpoints. */
 export interface EdgeGeometry {
@@ -137,6 +139,13 @@ export class Tile {
         if (weights[edge] === 0) throw new Error("invalid tile edge weight");
         if (!geometryStarts.has(geometries[edge]! & GEOMETRY_OFFSET_MASK)) {
           throw new Error("invalid tile geometry reference");
+        }
+      }
+      for (let source = 0; source < this.nodeCount; source++) {
+        for (let edge = offsets[source]!; edge < offsets[source + 1]!; edge++) {
+          const target = targets[edge]!;
+          const bound = heuristicWeight(this.lat[source]!, this.lon[source]!, this.lat[target]!, this.lon[target]!, WEIGHT_SCALE);
+          if (weights[edge]! < bound) throw new Error("tile edge violates the geometric lower bound; rebuild this dataset");
         }
       }
     }

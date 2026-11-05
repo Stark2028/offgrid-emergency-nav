@@ -31,7 +31,7 @@
 
 import { heuristicWeight } from "../geo/distance.js";
 import { WEIGHT_SCALE } from "../graph/format.js";
-import type { TileSet } from "../graph/tileset.js";
+import type { RoutingGraph } from "../graph/tileset.js";
 import { MinHeap } from "./heap.js";
 
 const NO_PARENT = -1;
@@ -97,7 +97,7 @@ interface SearchState {
  * `missing` field reports cells the search wanted but could not reach.
  */
 export function route(
-  tiles: TileSet,
+  tiles: RoutingGraph,
   source: number,
   target: number,
   options: RouteOptions = {},
@@ -306,10 +306,9 @@ export function route(
         state.heap.push(neighbourIndex, toKey(state, candidate, edge.target));
       }
 
-      // Join through this neighbour if the opposite search has already settled
-      // it. This check cannot be dropped in favour of only joining at settled
-      // nodes: the optimal path's meeting point is often discovered *here* and
-      // never popped by both sides before the termination bound fires.
+      // A finite opposite distance already describes a real path. Waiting for
+      // the opposite node to settle loses direct one-way paths when equal keys
+      // let one frontier exhaust before the other ever expands.
       //
       // The subtlety is that `candidate` is tentative -- if the relaxation
       // guard above failed, `parent[neighbourIndex]` still points along an
@@ -318,7 +317,7 @@ export function route(
       // true optimum containing a step with no edge behind it. So record the
       // predecessor that belongs to *this* join explicitly, and let joinPaths
       // use it instead of trusting the tree link.
-      if (other.settled[neighbourIndex]) {
+      if (Number.isFinite(other.distance[neighbourIndex])) {
         const total = candidate + other.distance[neighbourIndex]!;
         if (total < mu) {
           mu = total;
@@ -331,7 +330,7 @@ export function route(
 
     // The node just settled may itself be the join point, in which case its own
     // committed parent chain is correct and no override is needed.
-    if (other.settled[currentIndex]) {
+    if (Number.isFinite(other.distance[currentIndex])) {
       const total = currentDistance + other.distance[currentIndex]!;
       if (total < mu) {
         mu = total;

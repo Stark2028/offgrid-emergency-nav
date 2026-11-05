@@ -1,174 +1,113 @@
-# OffGrid
+# OFFGRID
 
-### Navigation for when the network goes down.
+**Choose an area. Download its maps. Keep them when the network disappears.**
 
-OffGrid is building toward offline emergency navigation: compute routes on-device from downloaded road data, then exchange local hazard reports between nearby phones without a central server.
+OFFGRID has an installable Android pilot, a web companion, verified offline maps, on-device walking routes and foreground location guidance. The first phone-test region is **Prayagraj, Uttar Pradesh**. Native storage, reopening, file checking, offline route planning and Back navigation passed on a Samsung Galaxy M53 / Android 15. Live GPS and field acceptance remain open; this is a pilot, not an approved production release. See [Android setup and release gates](docs/ANDROID_RELEASE.md). Safe destinations, signed hazards and BLE mesh remain future work.
 
-**Today, this repository contains the routing engine and map-data pipeline.** They run and can be tested locally. The mobile application, offline basemap, and peer-to-peer hazard transport are still planned.
+## Run the app
 
-[Get started](#get-started) · [Architecture](#architecture) · [Verification](#verification) · [Roadmap](#roadmap) · [Production readiness](PRODUCTION_READINESS.md)
+Requires Node 22.12+, pnpm 12.3.4 and Python 3.12 for pipeline checks. The starter packs are already included; no OSM download or API key is required to run the app.
 
-> **Development status:** routing prototype, not field-ready. The current graph models motor roads and vehicle travel times; it must not be presented as pedestrian evacuation guidance. There is no live app or APK yet.
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pnpm preview
+```
 
-## Why OffGrid?
+Open **http://127.0.0.1:4173/**. Choose an area, inspect its coverage, download it, then disable the network and reload. **Check offline files** re-verifies the installed pack without a network request. **Downloaded** shows saved areas; removal asks for an explicit confirmation.
 
-When connectivity disappears, navigation should still be able to answer a basic question: **how can I get from here to there using the map already on my phone?**
+For development with hot reload, use `pnpm dev`. The development server does not register the offline service worker; use the production preview to test offline reopening. The Android app is under `apps/web/android`; see the [Android build and phone-test guide](docs/ANDROID_RELEASE.md). The browser companion needs HTTPS hosting for installation away from localhost.
 
-OffGrid starts with that foundation. OpenStreetMap data becomes compact local graph tiles. A routing engine searches those tiles without a network request. The planned hazard layer will make reports visible and dismissible, so people can understand why a suggested route changes.
+## Included areas
 
-The intended deployment has no application backend for routing. Map downloads and updates will still require connectivity before offline use.
+| Map pack | Download rectangle area | Map-file bytes |
+| --- | --- | ---: |
+| Prayagraj city / Naini / Jhunsi / Phaphamau | 841.80 km² | 9,878,890 |
+| Connaught Place, Central Delhi | 2.60 km² | 381,130 |
+| Hauz Khas / Green Park, South Delhi | 4.75 km² | 307,376 |
+| Sector 18 / Botanical Garden, Noida | 4.25 km² | 220,371 |
 
-## What works today
+Prayagraj is a broad city-area pack; the Delhi/Noida packs are **bounded starter neighborhoods**. None is a whole-district download. Exact outlines, source dates and measured sizes are visible before downloading. The app shell and lightweight previews are separate from these map-file totals. Original OSM snapshot metadata and source checksums are preserved in each manifest and the committed compressed snapshots.
 
-| Capability | Implementation |
-| --- | --- |
-| Map-data pipeline | Python converts an OSM PBF extract into binary geohash-6 tiles |
-| Local routing | Bidirectional A* over forward and reverse CSR adjacency |
-| Routing checks | Reference Dijkstra, independent fixture costs, and adversarial graph tests |
-| Multi-target costs | Reverse multi-source Dijkstra finds costs to the nearest supplied exit node |
-| Cost overlays | Direction-aware callbacks support integer edge penalties capped at 20× |
-| Input validation | Checks tile structure, coordinates, geometry references, adjacency, and format limits |
-| Package build | DOM-free TypeScript core emits JavaScript ESM and type declarations |
-| Continuous integration | Node 22/24 and Python 3.12 checks, fixture regeneration, and npm dependency audit |
+## What works
 
-**Still planned:** GPS and road snapping, map UI, verified offline downloads, IndexedDB storage, signed hazard reports, and native BLE exchange. Exit nodes in tests are fixtures; real safe-exit data and safety assessment are not implemented.
+- Search and select a supported area, or explicitly request a location-based recommendation. Unsupported locations receive nearby feedback and remain a manual choice; there is no automatic location permission prompt or application-server location upload.
+- Preview geographic coverage with actual OSM streets and readable labels.
+- Pan and pinch coverage/navigation maps with a locally bundled WebGL renderer, zoom-dependent detail and standard map gestures. See [map rendering and measurements](docs/MAP_RENDERING.md).
+- Download real map/graph assets with progress, pause, persisted resume, HTTP Range support, checksums and structural verification.
+- Stage immutable dataset generations and atomically activate only a complete verified pack. Interrupted updates retain the previous working map.
+- Store maps in IndexedDB, request persistence, handle quota/connection failures, recheck files after reopening, repair damaged data and remove active/abandoned area files.
+- Reopen the production application offline with locally cached scripts, styles, fonts and icons. A waiting app update requires a user action and pauses no download automatically.
+- Plan walking routes from path-interior points, search local places, inspect directions and use foreground guidance with stale/poor-accuracy handling, off-route feedback and manual recalculation.
+- Route in the portable core with bidirectional A*, explicit point-to-point/escape coverage states, bounded overlays and independently checked fixture costs.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    OSM["OpenStreetMap PBF"] --> Pipeline["Python pipeline"]
-    Pipeline --> Tiles["Binary geohash tiles"]
-    Tiles --> Core["TypeScript graph core"]
-    Core --> Router["Bidirectional A*"]
-    Router --> Result["Path, cost, coverage status"]
-    Result -.-> Web["Planned web app"]
-    Result -.-> Android["Planned Android app"]
-    Android -.-> Mesh["Planned BLE hazard exchange"]
+    Source[OSM snapshot] --> Pipeline[Profile-aware Python pipeline]
+    Pipeline --> Pack[Immutable map generation + manifest]
+    Pack --> Catalogue[App catalogue pins manifest hash]
+    Catalogue --> Installer[Resumable verified installer]
+    Installer --> Store[Private native SQLite or browser IndexedDB]
+    Store --> UI[Offline library and map]
+    Store --> Worker[On-device walking worker]
+    Core[Portable routing core] --> Worker
+    Worker --> Guidance[Foreground location guidance]
 ```
 
-The pipeline simplifies road geometry while preserving routing choices, labels connected components, and writes forward and reverse adjacency. Boundary nodes appear as halo entries in neighboring tiles, allowing the core to report which additional cells a query needs.
+The four published datasets use a conservative `walking-v1` profile. The original PBF CLI retains its legacy motor profile. Node barrier/access tags are respected when present in the source. Neither profile models all conditional/legal/accessibility rules or certifies an emergency route.
 
-Tile arrays hold integer edge weights in centiseconds. Node IDs are dense indices assigned during a dataset build, so tiles from different generations must never be mixed. The core validates incoming tile structure, but verified dataset installation is still a release blocker.
+The app release pins the manifest hash; the manifest pins every file. This assumes a trusted initial app origin/release. There are no signing secrets in the browser, no routing backend and no accounts. See [map-pack contracts and recovery behavior](docs/MAP_PACKS.md).
 
-## Get started
+## Routing fixes in this milestone
 
-### Requirements
+1. Direct one-way paths are retained when equal priorities would otherwise exhaust one frontier before the opposite search settles a node.
+2. Coordinate quantization occurs before travel-cost calculation and tile ownership decisions, matching the serialized Float32 model. Tile ingestion rejects an endpoint bound greater than an edge cost.
+3. Nearest-exit search remains Map-compatible while exposing coverage, missing cells, budgets and unknown endpoints; its overlays obey the same integer 1–20× contract.
+4. Distinct consecutive nodes at the same coordinate retain a positive-cost connection instead of silently disconnecting the way.
 
-- **Node.js 22.12+**; CI checks Node 22 and 24.
-- **pnpm 12.3.4**, as pinned in `package.json`.
-- **Python 3.12** for the tested pipeline setup.
+Existing independent reference Dijkstra logic remains unchanged. Fixtures were regenerated because consistent quantization changes some stored costs; expected costs still come from independent Python searches. The 40 new precision graphs exercise 3,545 queries after serialization.
 
-### Build and check the routing core
+## Checks
 
 ```sh
-git clone https://github.com/Stark2028/offgrid-emergency-nav.git
-cd offgrid-emergency-nav
-pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm build
 pnpm test:build
+pnpm test:packs
+python -m pip install -r packages/pipeline/requirements-dev.txt
+python -m pytest packages/pipeline/tests
+pnpm test:e2e
 ```
 
-`pnpm test:build` is a runnable fixture demonstration: plain Node imports `@offgrid/core`, loads the committed grid tiles, and checks route costs against independently generated expectations. It needs no map download, browser, or API key.
+Windows browser tests use installed Chrome by default. CI installs Chromium; on other local systems install it with `pnpm --filter @offgrid/web exec playwright install chromium`. `OFFGRID_BROWSER_CHANNEL` can select another installed Chromium channel.
 
-Build before importing `@offgrid/core`; its exports point to generated files in `packages/core/dist/`. The package is currently private to this workspace and is not published to npm.
+Current evidence is recorded in [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md). The historical real-Delhi suite still skips four tests without the full generated `data/tiles` dataset. Published-pack checks include Prayagraj and 240 reference route comparisons. They do not replace the absent historical Delhi dataset or physical-device testing.
 
-### Run the Python tests
+## Build or refresh packs
 
-Create a virtual environment from the repository root, then use the commands for your platform.
-
-**Windows / PowerShell**
-
-```powershell
-python -m venv packages/pipeline/.venv
-./packages/pipeline/.venv/Scripts/python.exe -m pip install -r packages/pipeline/requirements-dev.txt
-./packages/pipeline/.venv/Scripts/python.exe -m pytest packages/pipeline/tests
-```
-
-**macOS / Linux**
+`pnpm packs:build` rebuilds the included packs from local or committed compressed source snapshots without a network request. To update source data deliberately, use the fetch tool, then rebuild and verify:
 
 ```sh
-python3 -m venv packages/pipeline/.venv
-./packages/pipeline/.venv/bin/python -m pip install -r packages/pipeline/requirements-dev.txt
-./packages/pipeline/.venv/bin/python -m pytest packages/pipeline/tests
+python packages/pipeline/fetch_starter_regions.py --refresh --region prayagraj-city --save-snapshots
+pnpm packs:build
+pnpm build
+pnpm test:packs
 ```
 
-These tests use committed fixtures and need neither PyOsmium nor a production OSM extract. To build real map data, see the [pipeline setup and source-data guide](packages/pipeline/README.md); install its separate `requirements.txt` and provide an extract to `build_graph.py`.
+See [docs/MAP_PACKS.md](docs/MAP_PACKS.md) for generation identity, manifests, resume behavior, storage and adding coverage. Pack publication is content-addressed and preserves earlier generations.
 
-There is no web development server yet: `apps/web` is not implemented, and the root `dev` script targets that future package.
+## Repository
 
-## Verification
+- `apps/web`: React/TypeScript/Vite app, Capacitor Android project, native map storage/location integration, routing worker and browser/device tests.
+- `packages/maps`: manifests, storage contract, verified resumable installation and directed edge-interior walking planner.
+- `packages/core`: DOM-free graph/routing primitives and independent-oracle tests.
+- `packages/pipeline`: graph generation, walking/motor profile policy and immutable pack publishing.
 
-The hardening review on **27 October 2026** recorded:
+Read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before changing routing or the tile format. [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) separates historical checks from remaining release work.
 
-| Check | Result |
-| --- | --- |
-| TypeScript fixture and regression tests | **139 passed** |
-| Python pipeline tests | **152 passed** |
-| Real-Delhi scale tests | **4 skipped** without generated `data/tiles` |
-| Type checking, ESM build, and public-package import check | Passed |
-| Hosted CI on Node 22/24 and Python 3.12 | Passed for the hardening revision |
-| npm dependency audit | No known advisories reported at review time |
+## Licenses
 
-See [GitHub Actions](https://github.com/Stark2028/offgrid-emergency-nav/actions) for results on the current revision. Test counts and dependency-audit results are snapshots, not permanent guarantees.
-
-Routing tests compare **costs**, since equal-cost optimal paths can differ. They also check that returned paths follow real edges, respect direction, and sum to the reported cost. Asymmetric penalties exercise backward-search behavior; corrupt-tile and integer-boundary cases guard against plausible-looking failures.
-
-The optional scale harness compares 2,000 sampled origin/destination pairs against reference Dijkstra when real tiles are present. A fresh clone does **not** run that dataset-dependent check. See the [readiness review](PRODUCTION_READINESS.md) for coverage limits and work needed before field testing.
-
-### Historical Delhi measurements
-
-The [engineering log](ENGINEERING_LOG.md#facts-about-the-data-measured-not-estimated) records an earlier generated dataset with **246,466 nodes**, **658,533 edges**, and **3,463 tiles**, totaling **28.5 MB**. Across 420 routable pairs, the corrected A* implementation settled an average of **872 nodes**, versus **2,501** for Dijkstra—about **65% fewer**.
-
-Those measurements predate the latest hardening changes and were not rerun during that review. They measure search effort, not route latency, battery consumption, or phone performance. Production extracts and generated city tiles are excluded from Git; small test fixtures are committed.
-
-## Engineering decisions
-
-- **Integer edge costs.** Centiseconds keep cost comparisons reproducible. Heap priorities use 64-bit floats to preserve exact integer values beyond the 32-bit edge-weight range; unsafe priorities are rejected.
-- **Balanced bidirectional potentials.** Forward and backward heuristics sum to zero. Search termination uses a best-path bound rather than stopping at the first shared frontier node.
-- **Explicit incomplete results.** A route reports `complete`, `missing-tiles`, or `budget-exceeded`. A finite path from an incomplete search is not proof of optimality; consumers must check the status.
-- **Bounded hazard penalties.** The routing overlay accepts costs from the original weight up to 20× it. The planned report system must expose uncertainty and age; signatures alone do not prove that reports are true or witnesses independent.
-- **Exact peer reconciliation is planned.** Sorted report IDs avoid Bloom-filter false positives silently suppressing delivery. Messaging is outside the project's scope.
-- **Native mesh is a separate milestone.** The intended web target provides offline routing; automatic BLE exchange belongs to a native Android implementation and requires physical-device validation. No anonymity claim is made.
-
-The [engineering log](ENGINEERING_LOG.md) explains these decisions, earlier routing failures, and attempted fixes that should not be repeated.
-
-## Roadmap
-
-1. **Make the data fit the journey.** Implement an explicit pedestrian profile, verified dataset generations, and reproducible real-data validation.
-2. **Deliver useful offline navigation.** Build GPS/manual-start flows, road snapping, route geometry, map rendering, and recoverable local storage.
-3. **Add advisory hazards.** Implement signed reports, expiry, replay protection, receiver limits, visible provenance, and dismissal.
-4. **Validate nearby exchange.** Test native BLE discovery, permissions, reconnection, and screen-off behavior on physical Android devices.
-5. **Prove the field experience.** Exercise airplane-mode starts, interrupted downloads, storage eviction, accessibility, updates, and rollback on budget hardware.
-
-The detailed [task list](TASKS.md) tracks implementation work. The [production-readiness review](PRODUCTION_READINESS.md) prioritizes release blockers and states what has not been tested.
-
-## Repository guide
-
-```text
-packages/
-  core/
-    src/                  Geographic primitives, tile readers, graph access, routing
-    test/                 Regression tests and committed binary fixtures
-    tools/                Built-package smoke test
-  pipeline/
-    graph.py              Graph construction and simplification
-    roads.py              Motor-road classification, access rules, and speeds
-    tiles.py              Binary tile serialization
-    build_graph.py        OSM-to-tile build entry point
-    tests/                Python regression tests
-    tools/                Cross-language fixture generators
-.github/workflows/ci.yml   Automated core and pipeline checks
-```
-
-## Contributing
-
-Read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before changing routing, tile encoding, or mesh design. Keep the reference Dijkstra independent, compare route costs rather than exact tied paths, and run the relevant suites before claiming a fix. Coordinate tile-format changes across Python, TypeScript, and generated fixtures.
-
-Bug reports are most useful with a reproducible graph or fixture, source/target IDs, loaded tile cells, expected behavior, and actual route status. Keep performance claims tied to a recorded dataset and an executed benchmark.
-
-## License and map data
-
-Package metadata declares the code **MIT**. OpenStreetMap data has separate attribution and licensing requirements; see [OpenStreetMap copyright and license](https://www.openstreetmap.org/copyright) before distributing datasets or a map application.
+Source code: [MIT](LICENSE). Map data: [OpenStreetMap contributors, ODbL](https://www.openstreetmap.org/copyright), with source snapshots and attribution retained. The code license does not replace map-data obligations. Bundled dependency/font notices are under `apps/web/public/licenses`.
