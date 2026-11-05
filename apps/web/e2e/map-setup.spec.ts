@@ -25,7 +25,9 @@ test("choose coverage, download, reopen offline, check files, and remove", async
   await expect(page.getByRole("button", { name: "Check offline files" })).toBeEnabled();
   await context.setOffline(true);
   await page.reload();
-  await expect(page.getByText("Saved on this device", { exact: true })).toBeVisible();
+  // Startup re-verifies the saved files. Shared CI CPUs can also be compiling
+  // the map shaders; wait for readiness instead of the default five seconds.
+  await expect(page.getByText("Saved on this device", { exact: true })).toBeVisible({ timeout: 20000 });
   await page.getByRole("button", { name: "Check offline files" }).click();
   await expect(page.getByText(/Offline file check passed/)).toBeVisible();
   await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); window.scrollTo(0, 0); });

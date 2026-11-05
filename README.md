@@ -1,75 +1,107 @@
 # OFFGRID
 
-**Choose an area. Download its maps. Keep them when the network disappears.**
+**Offline walking navigation for Android, with a web companion.**
 
-OFFGRID has an installable Android pilot, a web companion, verified offline maps, on-device walking routes and foreground location guidance. The first phone-test region is **Prayagraj, Uttar Pradesh**. Native storage, reopening, file checking, offline route planning and Back navigation passed on a Samsung Galaxy M53 / Android 15. Live GPS and field acceptance remain open; this is a pilot, not an approved production release. See [Android setup and release gates](docs/ANDROID_RELEASE.md). Safe destinations, signed hazards and BLE mesh remain future work.
+Save an area, choose a destination, and calculate a walking route on your device without an internet connection. OFFGRID uses OpenStreetMap data, verified local map packs, a portable routing engine and MapLibre rendering.
 
-## Run the app
+**Current version: `0.2.1-preview` — a development pilot.** Storage, offline route planning, reopening and map gestures have been tested on a Samsung Galaxy M53 running Android 15. Foreground location guidance is implemented, but a successful real GPS fix and physical walking acceptance remain open. This is not an approved emergency-navigation or production release.
 
-Requires Node 22.12+, pnpm 12.3.4 and Python 3.12 for pipeline checks. The starter packs are already included; no OSM download or API key is required to run the app.
+## What is available
+
+- An installable Capacitor Android app and a React web companion.
+- Area selection, geographic coverage previews, local place search and manual map pins.
+- Map installation with file hashes, structural checks, progress, pause/resume and atomic activation. A failed replacement retains the previous verified map.
+- Private native SQLite storage on Android; IndexedDB and an offline application shell in the browser.
+- On-device walking routes that respect directed graph edges and saved coverage, with path geometry and approximate walking time.
+- Foreground guidance with location accuracy/age checks, off-route feedback and manual recalculation. Guidance pauses when the app backgrounds.
+- GPU-rendered maps with drag, pinch, inertia and zoom-dependent drawing detail. Renderer workers, styles and fonts are local.
+
+Location is requested only after a user action. There are no accounts, routing servers or application-server location uploads.
+
+## Build the Android app
+
+Requirements:
+
+- Node.js **22.12+** and **pnpm 12.3.4**.
+- **JDK 21**, with `JAVA_HOME` set to that installation.
+- Android SDK **platform 36**, build tools and platform-tools, with `ANDROID_HOME` set to the SDK directory.
+- A device running **Android 7 / API 24 or newer**, with **WebView 117+** and WebGL support. Broader device compatibility is still being evaluated.
+
+Clone the repository and install dependencies:
 
 ```sh
+git clone https://github.com/Stark2028/offgrid-emergency-nav.git
+cd offgrid-emergency-nav
 pnpm install --frozen-lockfile
-pnpm build
-pnpm preview
 ```
 
-Open **http://127.0.0.1:4173/**. Choose an area, inspect its coverage, download it, then disable the network and reload. **Check offline files** re-verifies the installed pack without a network request. **Downloaded** shows saved areas; removal asks for an explicit confirmation.
+On Windows, the helper builds the web app, syncs bundled assets, assembles the debug APK and runs Android checks:
 
-For development with hot reload, use `pnpm dev`. The development server does not register the offline service worker; use the production preview to test offline reopening. The Android app is under `apps/web/android`; see the [Android build and phone-test guide](docs/ANDROID_RELEASE.md). The browser companion needs HTTPS hosting for installation away from localhost.
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/android-build.ps1
+```
 
-## Included areas
+On Linux or macOS:
 
-| Map pack | Download rectangle area | Map-file bytes |
-| --- | --- | ---: |
-| Prayagraj city / Naini / Jhunsi / Phaphamau | 841.80 km² | 9,878,890 |
+```sh
+pnpm build
+pnpm --filter @offgrid/web android:sync
+bash apps/web/android/gradlew -p apps/web/android --no-daemon :app:assembleDebug :app:lintDebug
+```
+
+The installable debug APK is generated at:
+
+```text
+apps/web/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+With USB debugging enabled and the computer authorized on your test phone, install it using an explicitly selected device:
+
+```sh
+adb devices
+adb -s DEVICE_SERIAL install -r apps/web/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+APKs and signing keys are not committed to Git. Debug APKs use a development identity. Optimized release output is unsigned unless production signing is configured; no production signing identity is included. See the [Android build, permissions and release guide](docs/ANDROID_RELEASE.md).
+
+## First use
+
+1. Open OFFGRID and select a supported area. Inspect its boundary, source date and size.
+2. On Android, choose **Save this area** and wait for **Saved on this device**.
+3. Open walking navigation. Choose named places or tap the map for your start and destination. Location is optional.
+4. Calculate a route and inspect the mapped path. **Check offline files** can reverify the saved data without a network request.
+
+**Android pilot delivery:** the APK includes the published packs. Saving an area copies and verifies those bundled files into private storage, so this step also works offline. Removing an area deletes the saved copy; the APK still contains its bundled source. Additional regions and independent catalogue downloads are not yet available.
+
+The **web companion downloads** packs from its own origin. It needs an initial online visit and a complete download before offline use. In both versions, only catalogue regions are supported; typing another city does not download an arbitrary map.
+
+## Included map coverage
+
+| Area | Download rectangle | Map-file bytes |
+| --- | ---: | ---: |
+| Prayagraj / Naini / Jhunsi / Phaphamau | 841.80 km² | 9,878,890 |
 | Connaught Place, Central Delhi | 2.60 km² | 381,130 |
 | Hauz Khas / Green Park, South Delhi | 4.75 km² | 307,376 |
 | Sector 18 / Botanical Garden, Noida | 4.25 km² | 220,371 |
 
-Prayagraj is a broad city-area pack; the Delhi/Noida packs are **bounded starter neighborhoods**. None is a whole-district download. Exact outlines, source dates and measured sizes are visible before downloading. The app shell and lightweight previews are separate from these map-file totals. Original OSM snapshot metadata and source checksums are preserved in each manifest and the committed compressed snapshots.
+These are the published download rectangles, not official city/district boundaries. The Delhi/Noida packs are small starter areas. Exact bounds and source metadata are shown in the app. The sizes above exclude the application shell and previews.
 
-## What works
+The map currently draws streets, paths and selected place names. It is not a complete basemap with water, terrain, buildings, satellite imagery or address search. Mapped access and place names do not certify current availability, an entrance or a safe destination.
 
-- Search and select a supported area, or explicitly request a location-based recommendation. Unsupported locations receive nearby feedback and remain a manual choice; there is no automatic location permission prompt or application-server location upload.
-- Preview geographic coverage with actual OSM streets and readable labels.
-- Pan and pinch coverage/navigation maps with a locally bundled WebGL renderer, zoom-dependent detail and standard map gestures. See [map rendering and measurements](docs/MAP_RENDERING.md).
-- Download real map/graph assets with progress, pause, persisted resume, HTTP Range support, checksums and structural verification.
-- Stage immutable dataset generations and atomically activate only a complete verified pack. Interrupted updates retain the previous working map.
-- Store maps in IndexedDB, request persistence, handle quota/connection failures, recheck files after reopening, repair damaged data and remove active/abandoned area files.
-- Reopen the production application offline with locally cached scripts, styles, fonts and icons. A waiting app update requires a user action and pauses no download automatically.
-- Plan walking routes from path-interior points, search local places, inspect directions and use foreground guidance with stale/poor-accuracy handling, off-route feedback and manual recalculation.
-- Route in the portable core with bidirectional A*, explicit point-to-point/escape coverage states, bounded overlays and independently checked fixture costs.
+## Run the web companion
 
-## Architecture
+From the repository root, after installing dependencies:
 
-```mermaid
-flowchart LR
-    Source[OSM snapshot] --> Pipeline[Profile-aware Python pipeline]
-    Pipeline --> Pack[Immutable map generation + manifest]
-    Pack --> Catalogue[App catalogue pins manifest hash]
-    Catalogue --> Installer[Resumable verified installer]
-    Installer --> Store[Private native SQLite or browser IndexedDB]
-    Store --> UI[Offline library and map]
-    Store --> Worker[On-device walking worker]
-    Core[Portable routing core] --> Worker
-    Worker --> Guidance[Foreground location guidance]
+```sh
+pnpm build
+pnpm preview
 ```
 
-The four published datasets use a conservative `walking-v1` profile. The original PBF CLI retains its legacy motor profile. Node barrier/access tags are respected when present in the source. Neither profile models all conditional/legal/accessibility rules or certifies an emergency route.
+Open **http://127.0.0.1:4173/**. Download an area completely before disabling the network and reloading. The production build includes the offline shell; the development server does not register it.
 
-The app release pins the manifest hash; the manifest pins every file. This assumes a trusted initial app origin/release. There are no signing secrets in the browser, no routing backend and no accounts. See [map-pack contracts and recovery behavior](docs/MAP_PACKS.md).
+Use `pnpm dev` for hot reload. HTTPS hosting is required for browser installation away from localhost.
 
-## Routing fixes in this milestone
-
-1. Direct one-way paths are retained when equal priorities would otherwise exhaust one frontier before the opposite search settles a node.
-2. Coordinate quantization occurs before travel-cost calculation and tile ownership decisions, matching the serialized Float32 model. Tile ingestion rejects an endpoint bound greater than an edge cost.
-3. Nearest-exit search remains Map-compatible while exposing coverage, missing cells, budgets and unknown endpoints; its overlays obey the same integer 1–20× contract.
-4. Distinct consecutive nodes at the same coordinate retain a positive-cost connection instead of silently disconnecting the way.
-
-Existing independent reference Dijkstra logic remains unchanged. Fixtures were regenerated because consistent quantization changes some stored costs; expected costs still come from independent Python searches. The 40 new precision graphs exercise 3,545 queries after serialization.
-
-## Checks
+## Verification
 
 ```sh
 pnpm typecheck
@@ -82,32 +114,49 @@ python -m pytest packages/pipeline/tests
 pnpm test:e2e
 ```
 
-Windows browser tests use installed Chrome by default. CI installs Chromium; on other local systems install it with `pnpm --filter @offgrid/web exec playwright install chromium`. `OFFGRID_BROWSER_CHANNEL` can select another installed Chromium channel.
+Python pipeline checks use **Python 3.12**. Windows browser tests use installed Chrome by default. On Linux/macOS, install the test browser first with `pnpm --filter @offgrid/web exec playwright install --with-deps chromium`. `OFFGRID_BROWSER_CHANNEL` can select another installed Chromium channel.
 
-Current evidence is recorded in [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md). The historical real-Delhi suite still skips four tests without the full generated `data/tiles` dataset. Published-pack checks include Prayagraj and 240 reference route comparisons. They do not replace the absent historical Delhi dataset or physical-device testing.
+The [Actions page](https://github.com/Stark2028/offgrid-emergency-nav/actions) shows current hosted results. Recorded local results and their limits are in [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md); they do not imply every hosted workflow is green. Four historical full-Delhi tests skip when the original generated dataset is absent. Published-pack checks include 240 independent-reference route comparisons across the current regions.
 
-## Build or refresh packs
+Physical Samsung tests cover native saved files, force-stop recovery, offline routing, two-touch pinch and Back. The three recorded WebGL drag runs had 16.7-ms median frame intervals; this is a device-specific measurement, not a universal frame-rate guarantee. See the [original device tests](docs/DEVICE_TEST_2026-11-04.md), [renderer follow-up](docs/DEVICE_TEST_2026-11-05.md) and [measurement method](docs/MAP_RENDERING.md).
 
-`pnpm packs:build` rebuilds the included packs from local or committed compressed source snapshots without a network request. To update source data deliberately, use the fetch tool, then rebuild and verify:
+## Architecture and source data
+
+```mermaid
+flowchart LR
+    OSM[OpenStreetMap snapshot] --> Pipeline[Python walking-profile pipeline]
+    Pipeline --> Pack[Immutable files and hash manifest]
+    Pack --> Installer[Verified installer]
+    Installer --> Storage[Native SQLite or browser IndexedDB]
+    Storage --> Map[Local MapLibre renderer]
+    Storage --> Worker[Walking route worker]
+    Core[Portable TypeScript router] --> Worker
+    Worker --> Guidance[Foreground guidance]
+```
+
+| Directory | Responsibility |
+| --- | --- |
+| `apps/web` | Shared React app, Capacitor Android project, map rendering and browser/device checks |
+| `packages/maps` | Manifest/storage contracts, installer and directed walking planner |
+| `packages/core` | Graph tiles, routing primitives and reference-oracle tests |
+| `packages/pipeline` | OSM processing, access profiles, frozen snapshots and pack publication |
+
+Current packs use the conservative `walking-v1` profile. The original PBF CLI retains a separate motor profile. Neither models every legal, conditional or accessibility restriction. The app pins each manifest hash; manifests pin individual files. Pack identity and successful verification are required before activation.
+
+Committed compressed OSM snapshots make existing packs reproducible without an OSM download:
 
 ```sh
-python packages/pipeline/fetch_starter_regions.py --refresh --region prayagraj-city --save-snapshots
 pnpm packs:build
 pnpm build
 pnpm test:packs
 ```
 
-See [docs/MAP_PACKS.md](docs/MAP_PACKS.md) for generation identity, manifests, resume behavior, storage and adding coverage. Pack publication is content-addressed and preserves earlier generations.
+To deliberately refresh a source, use `python packages/pipeline/fetch_starter_regions.py --refresh --region prayagraj-city --save-snapshots`, then rebuild and verify. See [map contracts and publishing](docs/MAP_PACKS.md). Read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before changing routing or the tile format.
 
-## Repository
+## Remaining release work
 
-- `apps/web`: React/TypeScript/Vite app, Capacitor Android project, native map storage/location integration, routing worker and browser/device tests.
-- `packages/maps`: manifests, storage contract, verified resumable installation and directed edge-interior walking planner.
-- `packages/core`: DOM-free graph/routing primitives and independent-oracle tests.
-- `packages/pipeline`: graph generation, walking/motor profile policy and immutable pack publishing.
+Real GPS/walking acceptance, actual airplane-mode cold start, broader lifecycle/accessibility and lower-end device tests, production signing and controlled distribution remain open. Route instructions are basic; voice guidance, background/lock-screen navigation, wheelchair routing, guaranteed-safe destinations, signed hazards and BLE mesh are not shipped features. See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for scope and priorities.
 
-Read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before changing routing or the tile format. [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) separates historical checks from remaining release work.
+## License and attribution
 
-## Licenses
-
-Source code: [MIT](LICENSE). Map data: [OpenStreetMap contributors, ODbL](https://www.openstreetmap.org/copyright), with source snapshots and attribution retained. The code license does not replace map-data obligations. Bundled dependency/font notices are under `apps/web/public/licenses`.
+Source code: [MIT](LICENSE). Map data: [OpenStreetMap contributors, ODbL](https://www.openstreetmap.org/copyright), with snapshots and attribution retained. Dependency/font notices, including MapLibre's license, are bundled in [apps/web/public/licenses](apps/web/public/licenses). The source-code license does not replace map-data or dependency-license obligations.
