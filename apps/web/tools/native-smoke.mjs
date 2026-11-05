@@ -20,15 +20,19 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const root = resolve(import.meta.dirname, '..');
 const captures = resolve(root, '../../.impeccable/review');
 await mkdir(captures, { recursive: true });
+const isAppPage = page => {
+  const url = page.url();
+  return url.startsWith('https://localhost') || url.startsWith('http://localhost') || url.startsWith('capacitor://localhost');
+};
 async function capture(name) { await writeFile(resolve(captures, `${name}.png`), execFileSync(adbPath, ['-s', serial, 'exec-out', 'screencap', '-p'], { timeout: 30000 })); }
 async function connect() {
   adb('shell', 'am', 'start', '-n', `${app}/.MainActivity`);
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 75; attempt++) {
     try {
       const pid = adb('shell', 'pidof', app).trim();
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`);
       const browser = await chromium.connectOverCDP('http://127.0.0.1:9223', { timeout: 3000 });
-      const page = browser.contexts()[0]?.pages().find(p => p.url().startsWith('https://localhost'));
+      const page = browser.contexts().flatMap(context => context.pages()).find(isAppPage);
       if (page) return { browser, page };
       await browser.close();
     } catch { /* WebView creates its socket shortly after the activity. */ }
