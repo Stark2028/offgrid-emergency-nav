@@ -91,6 +91,58 @@ def is_routable(tags: dict[str, str]) -> bool:
     return True
 
 
+# A separate, conservative walking profile. Motorway/trunk links require an
+# explicit foot permission; vehicle oneway rules do not constrain pedestrians.
+WALKING_HIGHWAYS = frozenset(HIGHWAY_SPEEDS) - {"motorway", "motorway_link", "trunk", "trunk_link"} | {
+    "footway", "pedestrian", "steps", "path", "service", "track", "cycleway", "bridleway"
+}
+
+
+def walking_access(tags: dict[str, str]) -> bool:
+    # Offline routing cannot establish whether conditional access is currently
+    # open. Keep such paths out rather than interpreting a partial expression.
+    if tags.get("foot:conditional") or tags.get("access:conditional"):
+        return False
+    if tags.get("opening_hours") not in {None, "", "24/7"}:
+        return False
+    for key in ("foot", "access"):
+        value = tags.get(key, "").strip().lower()
+        if value in BLOCKED_ACCESS or value == "destination":
+            return False
+        if value in {"yes", "designated", "permissive"}:
+            return True
+    return True
+
+
+def is_walkable(tags: dict[str, str]) -> bool:
+    if tags.get("temporary", "").lower() in {"yes", "true", "1"} or tags.get("seasonal", "").lower() not in {"", "no", "false", "0"}:
+        return False
+    if tags.get("bridge", "").lower() in {"pontoon", "floating"} or tags.get("ford", "").lower() not in {"", "no", "false", "0"}:
+        return False
+    highway = tags.get("highway", "")
+    explicit = tags.get("foot", "").strip().lower() in {"yes", "designated", "permissive"}
+    if highway not in WALKING_HIGHWAYS and not (highway in {"motorway", "motorway_link", "trunk", "trunk_link"} and explicit):
+        return False
+    return walking_access(tags)
+
+
+def walking_speed_kph(tags: dict[str, str]) -> float:
+    if tags.get("highway") == "steps":
+        return 2.5
+    if tags.get("surface") in {"sand", "mud", "ground", "gravel", "dirt"}:
+        return 3.5
+    return 4.8
+
+
+def walking_direction(tags: dict[str, str]) -> tuple[bool, bool]:
+    value = tags.get("oneway:foot", "").strip().lower()
+    if value in ONEWAY_FORWARD:
+        return True, False
+    if value in ONEWAY_REVERSE:
+        return False, True
+    return True, True
+
+
 def parse_maxspeed(raw: str | None) -> float | None:
     """Parse an OSM ``maxspeed`` value to km/h, or None if unusable.
 

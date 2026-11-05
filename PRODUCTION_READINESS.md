@@ -1,5 +1,27 @@
 # Production readiness review
 
+## Current status ? 4 November 2026
+
+**Device-test candidate; production release is not approved.** The implementation now includes an Android application, native private SQLite maps, a web companion, verified resumable installation, directed edge-interior walking routes, local place search and foreground location guidance. Prayagraj is published as an 841.80 km? region with 9,878,890 bytes / 1,003 files. Three smaller Delhi/Noida starter packs remain available.
+
+Build, source and automated evidence are described in [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md). The exact phone checklist, delivery limits, permissions, signing and remaining gates are in [docs/ANDROID_RELEASE.md](docs/ANDROID_RELEASE.md).
+
+| Priority | Remaining issue | Why it matters / required improvement |
+| --- | --- | --- |
+| Release gate | Remaining device and field acceptance | Samsung Galaxy M53 / Android 15 passed five original native SQLite tests; the 5 November renderer follow-up passed eight app checks and five optimized-build checks. Measured WebGL drag cadence reached 16.7-ms median intervals, and two-touch pinch passed. Location permission was granted in the earlier run but no usable GPS fix returned. Verify actual GPS guidance, airplane-mode cold start, lifecycle/accessibility, a familiar Prayagraj walk and a broader device matrix. |
+| Release gate | Production signing and delivery | Use an owned, backed-up release identity, version/upgrade checks, controlled distribution and public privacy details. Current APK is a debug-signed pilot; optimized release output is unsigned. |
+| Release gate | Field access and river crossings | Fresh OSM data is not proof a bridge/path is open or lawful today. Inspect representative city/Naini/Jhunsi/Phaphamau routes and retain failures as regressions. |
+| Before wider coverage | Pack delivery and scaling | Pilot APK bundles published packs; native limits protect bridge/database memory. Add hosted, authenticated catalogue updates and independently downloadable regions, then profile memory/storage/battery on lower-end phones. |
+| Navigation improvement | Matching and guidance | Present matching is a geometric projection with accuracy/age gates, overlap rejection and a progress window. Add evaluated sequence-based map matching, richer named-road/manoeuvre data, voice/background service if required, and field evidence for arrival/rerouting. |
+| Map improvement | Cartographic context | Street/path geometry and place names are present; water/land/terrain layers, entrances, address search and accessibility profiles remain incomplete. Improve the real-phone map before claiming a general navigation replacement. |
+| Separate capability | Safe destinations and hazard mesh | Destination safety semantics, signed reports, replay/expiry/conflict handling, persistence and native BLE are unimplemented. They need a distinct threat model and multi-phone validation before exposure. |
+
+Current safeguards: no location uploads, no accounts, no automatic permission prompt, no release WebView debugging, no cleartext app transport, no cloud/device-transfer backup, content-pinned map manifests, bounds-limited routes and explicitly conservative walking access. These reduce specific failure modes; they do not establish emergency safety.
+
+The following section is the archived 27 October hardening review. Statements there about missing application/download code describe that revision, not the current branch.
+
+## Archived hardening review — 27 October 2026
+
 Reviewed 2026-10-27. **OffGrid is a routing prototype, not a field-ready emergency navigation product.** This review hardens the existing core; it does not certify emergency use or validate the planned mobile transports.
 
 ## Fixed in this review

@@ -41,6 +41,17 @@ export interface DijkstraOptions {
   readonly edgeCost?: (source: number, target: number, weight: number) => number;
 }
 
+export interface EscapeOptions extends DijkstraOptions {
+  readonly maxSettled?: number;
+}
+
+/** Map-compatible result with explicit coverage for the application escape flow. */
+export class EscapeResult extends Map<number, { cost: number; next: number }> {
+  status: "complete" | "missing-tiles" | "budget-exceeded" | "unknown-endpoints" = "complete";
+  missing: readonly string[] = [];
+  settled = 0;
+}
+
 /**
  * Shortest path from `source` to `target`, or undefined when none exists.
  *
@@ -157,9 +168,13 @@ export function dijkstraFrom(
   tiles: TileSet,
   sources: readonly number[],
   direction: "forward" | "reverse",
-  options: DijkstraOptions = {},
-): Map<number, { cost: number; next: number }> {
+  options: EscapeOptions = {},
+): EscapeResult {
   const edgeCost = options.edgeCost;
+  const budget = options.maxSettled ?? Infinity;
+  if (budget !== Infinity && (!Number.isSafeInteger(budget) || budget < 0)) throw new RangeError("maxSettled must be a non-negative safe integer or Infinity");
+  const missing = new Set<string>();
+  let unknownSource = false;
 
   const indexOf = new Map<number, number>();
   const globalId: number[] = [];
@@ -170,6 +185,8 @@ export function dijkstraFrom(
   const intern = (id: number): number => {
     let index = indexOf.get(id);
     if (index === undefined) {
+      const unresolved = tiles.unresolved(id);
+      if (unresolved) missing.add(unresolved.geohash);
       index = globalId.length;
       indexOf.set(id, index);
       globalId.push(id);
@@ -185,7 +202,7 @@ export function dijkstraFrom(
   const heap = new MinHeap(Math.max(capacity, 1));
 
   for (const source of sources) {
-    if (tiles.resolve(source) === undefined) continue;
+    if (tiles.resolve(source) === undefined) { unknownSource = true; continue; }
     const index = intern(source);
     if (distance[index] !== 0) {
       distance[index] = 0;
@@ -194,14 +211,17 @@ export function dijkstraFrom(
     }
   }
 
-  const out = new Map<number, { cost: number; next: number }>();
+  const out = new EscapeResult();
+  let budgetExceeded = false;
 
   while (!heap.isEmpty()) {
+    if (out.settled >= budget) { budgetExceeded = true; break; }
     const currentIndex = heap.pop();
     if (currentIndex < 0) break;
     if (settled[currentIndex]) continue;
 
     settled[currentIndex] = true;
+    out.settled++;
     const currentId = globalId[currentIndex]!;
     const currentDistance = distance[currentIndex]!;
 
@@ -219,6 +239,9 @@ export function dijkstraFrom(
           ? edgeCost(currentId, edge.target, edge.weight)
           : edgeCost(edge.target, currentId, edge.weight)
         : edge.weight;
+      if (!Number.isSafeInteger(weight) || weight < edge.weight || weight > 20 * edge.weight) {
+        throw new RangeError("edgeCost must return a safe integer between the base weight and 20 times it");
+      }
       const candidate = currentDistance + weight;
 
       const neighbourIndex = intern(edge.target);
@@ -232,6 +255,8 @@ export function dijkstraFrom(
     }
   }
 
+  out.missing = [...missing];
+  out.status = budgetExceeded ? "budget-exceeded" : unknownSource || sources.length === 0 ? "unknown-endpoints" : missing.size ? "missing-tiles" : "complete";
   return out;
 }
 

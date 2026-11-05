@@ -117,9 +117,15 @@ class TestWayIngestion:
         assert builder.stats["ways_used"] == 0
         assert not builder.edges
 
-    def test_duplicate_positions_produce_no_edge(self) -> None:
+    def test_coincident_distinct_ids_remain_connected(self) -> None:
         builder = GraphBuilder()
         builder.add_way({"highway": "residential"}, [1, 2], [(28.6, 77.2), (28.6, 77.2)])
+        assert [(edge.source, edge.target, edge.weight) for edge in builder.edges] == [(1, 2, 1), (2, 1, 1)]
+        assert len(set(builder.label_components().values())) == 1
+
+    def test_repeated_identical_id_does_not_create_a_self_loop(self) -> None:
+        builder = GraphBuilder()
+        builder.add_way({"highway": "residential"}, [1, 1], [(28.6, 77.2), (28.6, 77.2)])
         assert not builder.edges
 
     def test_missing_coordinates_split_the_way(self) -> None:
