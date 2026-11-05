@@ -32,8 +32,11 @@ async function connect() {
       const pid = adb('shell', 'pidof', app).trim();
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`);
       const browser = await chromium.connectOverCDP('http://127.0.0.1:9223', { timeout: 3000 });
-      const page = browser.contexts().flatMap(context => context.pages()).find(isAppPage);
-      if (page) return { browser, page };
+      for (let poll = 0; poll < 8; poll++) {
+        const page = browser.contexts().flatMap(context => context.pages()).find(isAppPage);
+        if (page) return { browser, page };
+        await delay(500);
+      }
       await browser.close();
     } catch { /* WebView creates its socket shortly after the activity. */ }
     await delay(1000);
