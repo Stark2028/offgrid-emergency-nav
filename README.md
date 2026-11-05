@@ -1,71 +1,113 @@
-# OffGrid
+# OFFGRID
 
-**Offline-first emergency navigation. No servers, no internet, no cell towers.**
+**Choose an area. Download its maps. Keep them when the network disappears.**
 
-During internet blackouts, natural disasters, or mass protests, cellular networks are jammed or severed and centralised navigation fails — Google Maps needs a server roundtrip to compute a route, and has no way to tell civilians about barricades, blocked roads, or hazards on the ground.
+OFFGRID has an installable Android pilot, a web companion, verified offline maps, on-device walking routes and foreground location guidance. The first phone-test region is **Prayagraj, Uttar Pradesh**. Native storage, reopening, file checking, offline route planning and Back navigation passed on a Samsung Galaxy M53 / Android 15. Live GPS and field acceptance remain open; this is a pilot, not an approved production release. See [Android setup and release gates](docs/ANDROID_RELEASE.md). Safe destinations, signed hazards and BLE mesh remain future work.
 
-OffGrid computes routes entirely on-device from a local road graph, and shares hazard reports between nearby devices with no infrastructure at all.
+## Run the app
 
-> **Status: in development.** The graph and routing core is built first and verified against a reference implementation, before any UI exists. All 206 tests pass, including a 2,000-pair fuzz against real Delhi data. No UI yet.
->
-> Contributors — including AI assistants — should read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before touching routing, the tile format, or the mesh design. It records the decisions that must not be silently reversed and the fixes that were tried and were wrong.
+Requires Node 22.12+, pnpm 12.3.4 and Python 3.12 for pipeline checks. The starter packs are already included; no OSM download or API key is required to run the app.
 
----
-
-## How it works
-
-| | |
-|---|---|
-| **Routing** | Bidirectional A\* over a CSR-encoded road graph in flat typed arrays. Measured on real Delhi data: **872 nodes settled vs Dijkstra's 2,501 — 65% fewer** |
-| **Map data** | Real OpenStreetMap data for Delhi — **246,466 nodes / 658,533 edges** across 3,463 tiles, 28.5 MB (measured, not estimated) |
-| **Storage** | Geohash-6 tiles in IndexedDB; the ~9 tiles around your GPS fix load in ~60 KB so the first paint is instant |
-| **Basemap** | Protomaps PMTiles, self-hosted glyphs and sprites, rendered offline by MapLibre |
-| **Hazards** | Ed25519-signed reports with graduated trust, shared peer-to-peer |
-| **Backend** | None. Static files on a CDN — a tool built for infrastructure failure shouldn't depend on infrastructure |
-
-## Engineering notes
-
-A few decisions that go against the obvious approach, and why.
-
-**Integer edge weights, not floats.** Weights are centiseconds of travel time in a `Uint32Array`. With float weights, accumulated rounding makes the forward and backward searches disagree about the cost of the same path, so the meeting-point comparison picks a marginally wrong node — a bug that surfaces as a flaky test rather than an obvious failure.
-
-**Balanced potentials in bidirectional A\*.** Running two independent heuristics makes the searches optimise inconsistent objectives, and terminating when the frontiers first meet returns a suboptimal path. The forward and backward potentials are balanced so they sum to zero, and the search terminates on `topF + topB ≥ μ`, where `μ` is the best path cost found so far.
-
-**Hazards never get infinite weight.** An attacker can generate keypairs in microseconds, so any "N distinct witnesses" rule is trivially satisfiable. Confirmed hazards are capped at a ×20 penalty — which reroutes just as effectively while bounding the blast radius of a false report. Hazards are shown to the user as dismissible annotations with their age and report count, not applied as invisible graph mutations.
-
-**Sorted ID lists, not Bloom filters, for peer reconciliation.** At a few hundred hazards the complete ID list is ~8 KB. A Bloom false positive means a peer wrongly believes you already have a hazard and never sends it — silent, unrecoverable data loss, degrading worst under emergency load. Exact reconciliation is simpler and cheaper than the failure mode it avoids.
-
-**Peer-to-peer is BLE-first, which means it cannot be a pure PWA.** Browsers are BLE *central*-only and cannot advertise as peripherals, so a web app cannot form a mesh — no API, on any engine. Every app that actually worked in a protest (Bridgefy, Briar, Bitchat) is native with automatic advertise-and-scan, because that is the only model that survives a moving crowd: two phones in pockets sync with zero interaction. QR exchange is kept, but honestly scoped — a prepared group syncing *before* trouble, not strangers swapping codes under tear gas. WebRTC-over-LAN is opportunistic only; public Wi-Fi routinely blocks the multicast that local ICE candidates depend on. The transport layer is an interface, so the same codebase ships as a web build (routing, no mesh) and an Android build (everything).
-
-## Repository layout
-
-```
-packages/core/       Graph, routing, mesh, crypto. Pure TypeScript, zero DOM
-                     dependencies — runs and tests in Node. Correctness lives here.
-packages/pipeline/   Python. OpenStreetMap PBF -> binary geohash tiles. Build-time only.
-apps/web/            React + TypeScript + Vite. Not started yet — empty stub.
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pnpm preview
 ```
 
-## Development
+Open **http://127.0.0.1:4173/**. Choose an area, inspect its coverage, download it, then disable the network and reload. **Check offline files** re-verifies the installed pack without a network request. **Downloaded** shows saved areas; removal asks for an explicit confirmation.
 
-Requires Node 20+ and pnpm.
+For development with hot reload, use `pnpm dev`. The development server does not register the offline service worker; use the production preview to test offline reopening. The Android app is under `apps/web/android`; see the [Android build and phone-test guide](docs/ANDROID_RELEASE.md). The browser companion needs HTTPS hosting for installation away from localhost.
 
-```bash
-pnpm install
-pnpm test          # unit + fuzz tests
+## Included areas
+
+| Map pack | Download rectangle area | Map-file bytes |
+| --- | --- | ---: |
+| Prayagraj city / Naini / Jhunsi / Phaphamau | 841.80 km² | 9,878,890 |
+| Connaught Place, Central Delhi | 2.60 km² | 381,130 |
+| Hauz Khas / Green Park, South Delhi | 4.75 km² | 307,376 |
+| Sector 18 / Botanical Garden, Noida | 4.25 km² | 220,371 |
+
+Prayagraj is a broad city-area pack; the Delhi/Noida packs are **bounded starter neighborhoods**. None is a whole-district download. Exact outlines, source dates and measured sizes are visible before downloading. The app shell and lightweight previews are separate from these map-file totals. Original OSM snapshot metadata and source checksums are preserved in each manifest and the committed compressed snapshots.
+
+## What works
+
+- Search and select a supported area, or explicitly request a location-based recommendation. Unsupported locations receive nearby feedback and remain a manual choice; there is no automatic location permission prompt or application-server location upload.
+- Preview geographic coverage with actual OSM streets and readable labels.
+- Pan and pinch coverage/navigation maps with a locally bundled WebGL renderer, zoom-dependent detail and standard map gestures. See [map rendering and measurements](docs/MAP_RENDERING.md).
+- Download real map/graph assets with progress, pause, persisted resume, HTTP Range support, checksums and structural verification.
+- Stage immutable dataset generations and atomically activate only a complete verified pack. Interrupted updates retain the previous working map.
+- Store maps in IndexedDB, request persistence, handle quota/connection failures, recheck files after reopening, repair damaged data and remove active/abandoned area files.
+- Reopen the production application offline with locally cached scripts, styles, fonts and icons. A waiting app update requires a user action and pauses no download automatically.
+- Plan walking routes from path-interior points, search local places, inspect directions and use foreground guidance with stale/poor-accuracy handling, off-route feedback and manual recalculation.
+- Route in the portable core with bidirectional A*, explicit point-to-point/escape coverage states, bounded overlays and independently checked fixture costs.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Source[OSM snapshot] --> Pipeline[Profile-aware Python pipeline]
+    Pipeline --> Pack[Immutable map generation + manifest]
+    Pack --> Catalogue[App catalogue pins manifest hash]
+    Catalogue --> Installer[Resumable verified installer]
+    Installer --> Store[Private native SQLite or browser IndexedDB]
+    Store --> UI[Offline library and map]
+    Store --> Worker[On-device walking worker]
+    Core[Portable routing core] --> Worker
+    Worker --> Guidance[Foreground location guidance]
+```
+
+The four published datasets use a conservative `walking-v1` profile. The original PBF CLI retains its legacy motor profile. Node barrier/access tags are respected when present in the source. Neither profile models all conditional/legal/accessibility rules or certifies an emergency route.
+
+The app release pins the manifest hash; the manifest pins every file. This assumes a trusted initial app origin/release. There are no signing secrets in the browser, no routing backend and no accounts. See [map-pack contracts and recovery behavior](docs/MAP_PACKS.md).
+
+## Routing fixes in this milestone
+
+1. Direct one-way paths are retained when equal priorities would otherwise exhaust one frontier before the opposite search settles a node.
+2. Coordinate quantization occurs before travel-cost calculation and tile ownership decisions, matching the serialized Float32 model. Tile ingestion rejects an endpoint bound greater than an edge cost.
+3. Nearest-exit search remains Map-compatible while exposing coverage, missing cells, budgets and unknown endpoints; its overlays obey the same integer 1–20× contract.
+4. Distinct consecutive nodes at the same coordinate retain a positive-cost connection instead of silently disconnecting the way.
+
+Existing independent reference Dijkstra logic remains unchanged. Fixtures were regenerated because consistent quantization changes some stored costs; expected costs still come from independent Python searches. The 40 new precision graphs exercise 3,545 queries after serialization.
+
+## Checks
+
+```sh
 pnpm typecheck
+pnpm test
+pnpm build
+pnpm test:build
+pnpm test:packs
+python -m pip install -r packages/pipeline/requirements-dev.txt
+python -m pytest packages/pipeline/tests
+pnpm test:e2e
 ```
 
-```bash
-# Python pipeline tests
-cd packages/pipeline && ./.venv/Scripts/python.exe -m pytest tests/
+Windows browser tests use installed Chrome by default. CI installs Chromium; on other local systems install it with `pnpm --filter @offgrid/web exec playwright install chromium`. `OFFGRID_BROWSER_CHANNEL` can select another installed Chromium channel.
+
+Current evidence is recorded in [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md). The historical real-Delhi suite still skips four tests without the full generated `data/tiles` dataset. Published-pack checks include Prayagraj and 240 reference route comparisons. They do not replace the absent historical Delhi dataset or physical-device testing.
+
+## Build or refresh packs
+
+`pnpm packs:build` rebuilds the included packs from local or committed compressed source snapshots without a network request. To update source data deliberately, use the fetch tool, then rebuild and verify:
+
+```sh
+python packages/pipeline/fetch_starter_regions.py --refresh --region prayagraj-city --save-snapshots
+pnpm packs:build
+pnpm build
+pnpm test:packs
 ```
 
-Routing correctness is verified by fuzzing thousands of random origin/destination pairs against a reference Dijkstra implementation and asserting exact cost equality. Subtly-wrong routes are invisible without an oracle — and the oracle has caught every routing bug in this project so far, including:
+See [docs/MAP_PACKS.md](docs/MAP_PACKS.md) for generation identity, manifests, resume behavior, storage and adding coverage. Pack publication is content-addressed and preserves earlier generations.
 
-- a router returning routes *cheaper* than the true optimum, by stitching a path through a step with no edge behind it (OSM node ids exceed 2³², and masking them into `u32` broke both the sort order a binary search depended on and the uniqueness of ids);
-- a backward search steered by the forward potential, quietly returning routes a few percent long.
+## Repository
 
-## License
+- `apps/web`: React/TypeScript/Vite app, Capacitor Android project, native map storage/location integration, routing worker and browser/device tests.
+- `packages/maps`: manifests, storage contract, verified resumable installation and directed edge-interior walking planner.
+- `packages/core`: DOM-free graph/routing primitives and independent-oracle tests.
+- `packages/pipeline`: graph generation, walking/motor profile policy and immutable pack publishing.
 
-MIT
+Read [ENGINEERING_LOG.md](ENGINEERING_LOG.md) before changing routing or the tile format. [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) separates historical checks from remaining release work.
+
+## Licenses
+
+Source code: [MIT](LICENSE). Map data: [OpenStreetMap contributors, ODbL](https://www.openstreetmap.org/copyright), with source snapshots and attribution retained. The code license does not replace map-data obligations. Bundled dependency/font notices are under `apps/web/public/licenses`.

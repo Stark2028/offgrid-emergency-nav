@@ -1,0 +1,118 @@
+name: Core and pipeline checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @offgrid/core build
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm test:build
+      - run: pnpm test:packs
+      - run: pnpm audit --audit-level high
+
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: packages/pipeline/requirements-dev.txt
+      - run: python -m pip install -r packages/pipeline/requirements-dev.txt
+      - run: python -m pytest packages/pipeline/tests
+      - name: Verify Python-generated fixtures match the TypeScript contract
+        run: |
+          python packages/pipeline/tools/gen_geohash_vectors.py
+          python packages/pipeline/tools/gen_tile_fixtures.py
+          python packages/pipeline/tools/gen_routing_fixtures.py
+          python packages/pipeline/tools/gen_precision_fixtures.py
+          python packages/pipeline/tools/gen_navigation_fixtures.py
+          git diff --exit-code -- packages/core/test/fixtures
+          git diff --exit-code -- packages/maps/test/navigation-fixtures.json
+      - name: Verify reproducible published starter packs
+        run: |
+          python packages/pipeline/publish_packs.py
+          git diff --exit-code -- apps/web/public/packs apps/web/src/generated/catalog.json
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @offgrid/web exec playwright install --with-deps chromium
+      - run: pnpm build
+      - run: pnpm test:e2e
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm --filter @offgrid/web android:sync
+      - run: bash apps/web/android/gradlew -p apps/web/android --no-daemon :app:assembleDebug :app:assembleRelease :app:lintDebug
+      - name: Enable KVM for the isolated test emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          script: |
+            bash apps/web/android/gradlew -p apps/web/android --no-daemon :app:connectedDebugAndroidTest
+            node apps/web/tools/native-smoke.mjs
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: android-verification
+          path: |
+            apps/web/android/app/build/outputs/apk/
+            apps/web/android/app/build/reports/
+            .impeccable/review/android-*.png

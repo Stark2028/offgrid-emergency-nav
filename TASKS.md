@@ -2,7 +2,15 @@
 
 End-to-end plan, from scaffold to deployed product. Reflects the state of the repo, not the original proposal — several items changed once real data and real browser constraints got involved.
 
-**Status:** Phase 1 complete, Phase 2 core complete. **206 of 206 tests passing** (88 TypeScript, 118 Python), including a 2,000-pair fuzz against real Delhi tiles. No known open bugs — see [ENGINEERING_LOG.md](ENGINEERING_LOG.md).
+**Status:** Android walking pilot and web companion implemented on `feat/offline-map-setup`, with Prayagraj and three Delhi/Noida areas. Samsung Galaxy M53 / Android 15 passed five original native SQLite tests; the 0.2.1 renderer follow-up passed eight app checks and five optimized-build checks. Foreground guidance is implemented; actual GPS/field acceptance and native mesh remain outstanding. See IMPLEMENTATION_NOTES.md for current checks. The phase checklist below retains historical milestones and proposed scope.
+
+- [x] Save Prayagraj into native private storage and verify all files on the physical phone.
+- [x] Force-stop/reopen, plan a route with the app WebView network disabled, and use Android Back.
+- [x] Repair native JSON integer decoding and connected-junction snapping found by phone tests.
+- [x] Replace city-scale SVG interaction with local WebGL rendering; measure Samsung drag improvement and verify actual pinch input.
+- [ ] Obtain a usable real GPS fix and check guidance on a familiar Prayagraj walk.
+- [ ] Verify real airplane-mode cold start, lifecycle, accessibility, storage pressure and upgrade behavior.
+- [ ] Complete production signing, controlled delivery and release acceptance.
 
 **First measured benchmark:** bidirectional A\* settles **872 nodes vs Dijkstra's 2,501 — 65% fewer** across 420 routable pairs on real data.
 
@@ -33,8 +41,8 @@ Two questions that can kill the project. Answer before building on top of them.
 - [x] Python venv, pinned requirements
 - [x] `.gitignore` / `.gitattributes` (LF normalisation, binaries, generated files)
 - [x] Public GitHub repo, pushed
-- [ ] **`packages/core/src/index.ts`** — `package.json` `main` points at a file that does not exist. Harmless today (tests import deep paths) but breaks the moment `apps/web` imports `@offgrid/core`
-- [ ] CI — GitHub Actions running both test suites on push
+- [x] Core barrel and emitted exports — JavaScript and declarations in `dist`, verified by a plain-Node import test
+- [x] CI — GitHub Actions for both suites, type checking, package build/imports, fixture regeneration, and dependency audit
 - [ ] Linting — ESLint + Prettier (TS), ruff (Python)
 
 ### OSM pipeline
@@ -110,8 +118,8 @@ The phase where correctness is actually proven. Nothing downstream matters if th
 
 End of this phase: a genuinely useful product with no mesh at all. **This is the safety net — protect it.**
 
-- [ ] `apps/web` scaffold — Vite + React + TS + Tailwind (currently an empty `src/` with no `package.json`)
-- [ ] IndexedDB tile store with LRU eviction
+- [x] `apps/web` scaffold: React + TypeScript + Vite, local fonts and responsive map setup
+- [~] IndexedDB generation store: verified installation, recovery, rollback and removal implemented; automatic LRU eviction deferred
 - [ ] Routing in a Web Worker, transferable buffers
 - [ ] MapLibre + PMTiles offline basemap (productionises Spike B)
   - [ ] Self-hosted style JSON, **all** glyph ranges incl. Devanagari, sprites at 1× and 2×
@@ -121,9 +129,9 @@ End of this phase: a genuinely useful product with no mesh at all. **This is the
 - [ ] Destination routing — secondary, for when the user does know where they are going
 - [ ] Route rendering
 - [ ] Cold-start GPS handling — last-known position, "finding you" state, manual pin drop
-- [ ] PWA shell — manifest, service worker, install prompt
-- [ ] `navigator.storage.persist()` + quota handling
-- [ ] First-run asset download with progress
+- [x] PWA shell: manifest, service worker, install prompt/help and controlled updates
+- [x] `navigator.storage.persist()` plus estimate and actual quota-error handling
+- [x] First-run area selection and verified download: progress, persisted pause/resume and corruption repair
 - [ ] Graceful degradation — route-only mode when the basemap won't fit
 - [ ] **Demo: airplane-mode phone, real GPS, tap destination, route drawn on an offline map**
 
@@ -213,10 +221,25 @@ The same codebase ships twice. Not a compromise — two genuinely different prod
 |---|---|
 | ~~BUG-009: occasional suboptimal route~~ | **Fixed.** `toKey` applied the forward potential to both searches, so `p_f + p_b` was `2·p_f` instead of 0 and the backward frontier was misdirected. Sign now lives on `SearchState` |
 | ~~BUG-001: unresolvable node ids~~ | **Fixed.** OSM ids exceed 2³²; masking them to u32 broke both sort order and uniqueness. Now dense build-local ids, `TILE_VERSION` 2 |
-| `apps/web` is an empty stub | No `package.json`; workspace resolves 2 projects, not 3 |
+| Map-preparation app | Implemented; four workspace projects. Navigation UI, snapping and route worker remain planned |
 | Turn restrictions ignored | Routes may suggest illegal turns |
 | Tile compression | 28.5 MB uncompressed; gzip/brotli would likely halve it. Deferred until real-device storage testing |
-| No CI | Tests only run locally |
+| CI | Implemented; hosted results must be checked per revision |
 | No linting | No ESLint/Prettier/ruff |
 | iOS is a hard target | No Web Bluetooth ever; aggressive storage eviction |
 | Graph is 246k nodes, not the planned ~61k | Not a defect — we cover ~2,600 km² incl. Gurgaon/Noida vs the 1,484 km² NCT, and 167k are genuine 3-way junctions. The estimate measured a narrower network |
+
+
+## Android pilot follow-up ? 4 November 2026
+
+- [x] Android application packaging, private SQLite packs, native hash/activation and permission-based foreground location.
+- [x] Local place/manual selection, path-interior walking routes, bounded coverage, map gestures, route drawing and foreground guidance.
+- [x] Prayagraj city-area pack and frozen provenance; real-data integrity and reference-route checks.
+- [x] Android build/lint pipeline and device instrumentation/smoke automation.
+- [ ] Execute native acceptance on a booted phone; record a familiar Prayagraj walk and representative crossings.
+- [ ] Production signing/upgrade/distribution/privacy acceptance.
+- [ ] Hosted independent region delivery and larger-data/low-end-device profiling.
+- [ ] Rich cartographic layers, entrance/address data and evaluated sequence-based matching.
+- [ ] Safe destinations, signed hazard protocol and native BLE with multi-device field validation.
+
+The implemented pilot does not mark earlier future capability checkboxes complete. See docs/ANDROID_RELEASE.md for scope and evidence.

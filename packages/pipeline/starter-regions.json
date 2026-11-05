@@ -1,0 +1,6 @@
+[
+  {"id":"prayagraj-city","name":"Prayagraj","subtitle":"City & river crossings","coverageLabel":"Prayagraj, Naini, Jhunsi & Phaphamau","coverageType":"city-area","bounds":[81.73,25.32,82.02,25.58],"source":"prayagraj-city.json","includePlaces":true,"maxLabels":1500,"maxSourceBytes":50331648,"sourceTimeoutSeconds":120},
+  {"id":"central-delhi","name":"New Delhi","subtitle":"Connaught Place","coverageLabel":"Central Delhi starter area","bounds":[77.205,28.626,77.225,28.638],"source":"central-delhi.json"},
+  {"id":"south-delhi","name":"South Delhi","subtitle":"Hauz Khas & Green Park","coverageLabel":"South Delhi starter area","bounds":[77.194,28.548,77.217,28.567],"source":"south-delhi.json"},
+  {"id":"noida-sector-18","name":"Noida","subtitle":"Sector 18 & Botanical Garden","coverageLabel":"Sector 18 starter area","bounds":[77.314,28.561,77.337,28.578],"source":"noida-sector-18.json"}
+]

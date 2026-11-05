@@ -1,0 +1,11 @@
+Map data is copyright OpenStreetMap contributors and available under the
+Open Database License (ODbL) 1.0: https://www.openstreetmap.org/copyright
+https://opendatacommons.org/licenses/odbl/1-0/
+
+Each generation's manifest records its source snapshot timestamp and SHA-256.
+The corresponding compressed source extracts are distributed in this repository
+under packages/pipeline/snapshots/. The application displays attribution on
+every coverage map. OFFGRID's MIT code license does not replace the data license.
+
+These bounded starter extracts are not full-city maps, safety assessments,
+current hazard reports, or guarantees of access. Source data may be incomplete.

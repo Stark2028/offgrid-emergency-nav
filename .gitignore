@@ -34,3 +34,12 @@ Thumbs.db
 # Test/bench artifacts
 coverage/
 bench-results/
+test-results/
+playwright-report/
+.impeccable/review/
+.pytest_cache/
+pytest-cache-files-*/
+.test-tmp/
+*.jks
+*.keystore
+.android-test/

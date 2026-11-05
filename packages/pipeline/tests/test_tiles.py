@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import geohash  # noqa: E402
-from graph import GraphBuilder  # noqa: E402
+from graph import Edge, GraphBuilder, Node  # noqa: E402
 from tiles import (  # noqa: E402
     HEADER_BYTES,
     NODE_FLAG_HALO,
@@ -81,6 +81,37 @@ class TestPackGeohash:
 
 
 class TestHeader:
+    def test_parallel_edges_keep_distinct_shapes_and_reverse_sharing(self) -> None:
+        nodes = {1: Node(1, 28.6000, 77.2000), 2: Node(2, 28.6006, 77.2000)}
+        shapes = [[(28.6003, 77.2001)], [(28.6003, 77.2002)]]
+        edges = [Edge(1, 2, 100, 10.0, shape) for shape in shapes]
+        edges += [Edge(2, 1, 100, 10.0, list(reversed(shape))) for shape in shapes]
+        blob = next(iter(build_tiles(nodes, edges, {1: 0, 2: 0}).values()))
+        header = read_header(blob)
+        # Two one-point records, shared between directions and CSR tables.
+        assert header["geometry_bytes"] == 2 * (2 + 8)
+        start = int(header["geometry_offset"])
+        assert struct.unpack_from("<ff", blob, start + 2) == pytest.approx(shapes[0][0], abs=1e-5)
+        assert struct.unpack_from("<ff", blob, start + 12) == pytest.approx(shapes[1][0], abs=1e-5)
+
+    def test_rejects_component_overflow_instead_of_merging_components(self) -> None:
+        builder = single_cell_graph()
+        with pytest.raises(ValueError, match="component"):
+            build_tiles(builder.nodes, builder.edges, {node: 65536 for node in builder.nodes})
+
+    @pytest.mark.parametrize("weight", [0, -1, 2**32])
+    def test_rejects_unrepresentable_weights(self, weight: int) -> None:
+        builder = single_cell_graph()
+        builder.edges[0].weight = weight
+        with pytest.raises(ValueError, match="weight"):
+            build_tiles(builder.nodes, builder.edges, builder.label_components())
+
+    def test_rejects_geometry_truncation(self) -> None:
+        builder = single_cell_graph()
+        builder.edges[0].shape = [(28.6, 77.2)] * 65536
+        with pytest.raises(ValueError, match="geometry"):
+            build_tiles(builder.nodes, builder.edges, builder.label_components())
+
     def test_writes_magic_and_version(self) -> None:
         builder = single_cell_graph()
         tiles = build_tiles(builder.nodes, builder.edges, builder.label_components())

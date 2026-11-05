@@ -35,7 +35,7 @@ export {
 
 // Graph access
 export { Tile, type EdgeGeometry } from "./graph/tile.js";
-export { TileSet, type NodeRef, type UnresolvedNode } from "./graph/tileset.js";
+export { TileSet, type RoutingGraph, type NodeRef, type UnresolvedNode } from "./graph/tileset.js";
 
 // Routing
 export { MinHeap } from "./routing/heap.js";
@@ -44,5 +44,7 @@ export {
   dijkstraFrom,
   type DijkstraOptions,
   type DijkstraResult,
+  EscapeResult,
+  type EscapeOptions,
 } from "./routing/dijkstra-reference.js";
 export { route, type RouteOptions, type RouteResult } from "./routing/bidirectional-astar.js";

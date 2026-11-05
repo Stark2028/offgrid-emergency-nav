@@ -5,13 +5,19 @@
   "description": "Offline-first emergency navigation PWA with peer-to-peer hazard sharing",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "packageManager": "pnpm@12.3.4",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
-    "dev": "pnpm --filter @offgrid/web dev"
+    "test": "pnpm prepare:core && pnpm -r test",
+    "typecheck": "pnpm prepare:core && pnpm -r typecheck",
+    "prepare:core": "pnpm --filter @offgrid/core build && pnpm --filter @offgrid/maps build",
+    "test:build": "pnpm --filter @offgrid/core test:build",
+    "dev": "pnpm --filter @offgrid/core build && pnpm --filter @offgrid/maps build && pnpm --filter @offgrid/web dev",
+    "test:e2e": "pnpm --filter @offgrid/web test:e2e",
+    "packs:build": "python packages/pipeline/publish_packs.py",
+    "test:packs": "pnpm --filter @offgrid/web test:packs",
+    "preview": "pnpm --filter @offgrid/web preview"
   }
 }

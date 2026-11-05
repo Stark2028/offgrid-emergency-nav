@@ -12,7 +12,7 @@
  */
 export class MinHeap {
   private readonly nodes: Uint32Array;
-  private readonly priorities: Uint32Array;
+  private readonly priorities: Float64Array;
   /** nodeId -> heap slot, or ABSENT. Doubles as the "is queued" test. */
   private readonly positions: Int32Array;
   private length = 0;
@@ -24,8 +24,13 @@ export class MinHeap {
    *   node count of the loaded graph, so pushes can never overflow.
    */
   constructor(capacity: number) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 0x7fff_ffff) {
+      throw new RangeError("heap capacity must be a positive 31-bit integer");
+    }
     this.nodes = new Uint32Array(capacity);
-    this.priorities = new Uint32Array(capacity);
+    // Priorities include accumulated path costs and doubled A* potentials;
+    // they can exceed u32 even though each stored edge weight fits in u32.
+    this.priorities = new Float64Array(capacity);
     this.positions = new Int32Array(capacity).fill(MinHeap.ABSENT);
   }
 
@@ -38,11 +43,13 @@ export class MinHeap {
   }
 
   has(nodeId: number): boolean {
-    return this.positions[nodeId] !== MinHeap.ABSENT;
+    return Number.isInteger(nodeId) && nodeId >= 0 && nodeId < this.positions.length &&
+      this.positions[nodeId] !== MinHeap.ABSENT;
   }
 
   /** Priority of a queued node, or undefined if not queued. */
   priorityOf(nodeId: number): number | undefined {
+    if (!this.has(nodeId)) return undefined;
     const slot = this.positions[nodeId]!;
     return slot === MinHeap.ABSENT ? undefined : this.priorities[slot]!;
   }
@@ -59,6 +66,12 @@ export class MinHeap {
 
   /** Insert, or lower the priority of an already-queued node. */
   push(nodeId: number, priority: number): void {
+    if (!Number.isInteger(nodeId) || nodeId < 0 || nodeId >= this.positions.length) {
+      throw new RangeError("heap node id is outside capacity");
+    }
+    if (!Number.isSafeInteger(priority) || priority < 0) {
+      throw new RangeError("heap priority must be a non-negative safe integer");
+    }
     const existing = this.positions[nodeId]!;
     if (existing !== MinHeap.ABSENT) {
       if (priority < this.priorities[existing]!) {

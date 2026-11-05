@@ -19,16 +19,24 @@ explicitly and asserted in tests:
 from __future__ import annotations
 
 import math
+import struct
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from roads import is_routable, speed_kph, travel_direction
+from roads import is_routable, speed_kph, travel_direction, is_walkable, walking_speed_kph, walking_direction
 
 # Matches WEIGHT_SCALE in packages/core/src/graph/format.ts.
 # Integer weights keep the forward and backward A* searches exactly consistent.
 WEIGHT_SCALE = 100  # weight units per second
 
 EARTH_RADIUS_M = 6_371_008.8
+
+
+def canonical_coordinate(value: float) -> float:
+    """Use the runtime's f32 coordinate model before ownership or cost decisions."""
+    if not math.isfinite(value):
+        raise ValueError("coordinates must be finite")
+    return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
 def haversine_metres(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
@@ -82,7 +90,10 @@ class Edge:
 class GraphBuilder:
     """Accumulates OSM ways into a directed graph, then simplifies it."""
 
-    def __init__(self) -> None:
+    def __init__(self, profile: str = "motor") -> None:
+        if profile not in {"motor", "walking"}:
+            raise ValueError("unknown travel profile")
+        self.profile = profile
         self.nodes: dict[int, Node] = {}
         self.edges: list[Edge] = []
         self._ways_seen = 0
@@ -107,14 +118,15 @@ class GraphBuilder:
         fragments rather than inventing a straight line across the gap.
         """
         self._ways_seen += 1
-        if not is_routable(tags) or len(node_refs) < 2:
+        permitted = is_walkable(tags) if self.profile == "walking" else is_routable(tags)
+        if not permitted or len(node_refs) < 2:
             return
 
-        forward, backward = travel_direction(tags)
+        forward, backward = walking_direction(tags) if self.profile == "walking" else travel_direction(tags)
         if not forward and not backward:
             return
 
-        kph = speed_kph(tags)
+        kph = walking_speed_kph(tags) if self.profile == "walking" else speed_kph(tags)
         self._ways_used += 1
 
         previous: int | None = None
@@ -125,7 +137,7 @@ class GraphBuilder:
 
             node = self.nodes.get(ref)
             if node is None:
-                node = Node(osm_id=ref, lat=lat, lon=lon)
+                node = Node(osm_id=ref, lat=canonical_coordinate(lat), lon=canonical_coordinate(lon))
                 self.nodes[ref] = node
             node.way_count += 1
 
@@ -138,10 +150,11 @@ class GraphBuilder:
     ) -> None:
         a = self.nodes[source]
         b = self.nodes[target]
+        if source == target:
+            return
         metres = haversine_metres(a.lat, a.lon, b.lat, b.lon)
-        if metres <= 0:
-            return  # duplicate node position; no edge to make
-
+        # Distinct consecutive IDs can share a position. They remain connected
+        # by this way, with the same positive minimum used for very short edges.
         weight = travel_weight(metres, kph)
         if forward:
             self.edges.append(Edge(source, target, weight, metres))
@@ -208,6 +221,11 @@ class GraphBuilder:
         """
         out_edges = outgoing.get(node_id, [])
         in_edges = incoming.get(node_id, [])
+        # Walking users can start between graph nodes. Preserve OSM way
+        # boundaries so one simplified edge cannot mix e.g. stairs at 2.5 km/h
+        # with a footway at 4.8 km/h. Edge-interior time must remain meaningful.
+        if self.profile == "walking" and self.nodes[node_id].way_count > 1:
+            return True
 
         # Dead end, or unreachable.
         if not out_edges or not in_edges:

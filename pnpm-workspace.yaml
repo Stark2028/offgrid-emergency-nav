@@ -5,3 +5,9 @@ packages:
 # vitest needs it. Trusted dependency, approved deliberately.
 allowBuilds:
   esbuild: true
+# Capacitor CLI's glob range includes two fixed denial-of-service advisories.
+# Keep its build-only traversal dependencies on the patched APIs; cap sync is
+# covered by Android CI and the local APK build.
+overrides:
+  glob: 14.0.2
+  minimatch: 11.0.1

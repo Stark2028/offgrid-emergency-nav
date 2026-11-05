@@ -44,6 +44,12 @@ export function encodeGeohash(
   lon: number,
   precision: number = TILE_PRECISION,
 ): string {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    throw new RangeError("geohash coordinates must be finite and within geographic bounds");
+  }
+  if (!Number.isInteger(precision) || precision < 1 || precision > 12) {
+    throw new RangeError("geohash precision must be an integer from 1 to 12");
+  }
   let latLo = LAT_MIN;
   let latHi = LAT_MAX;
   let lonLo = LON_MIN;
@@ -94,6 +100,9 @@ export function encodeGeohash(
  * Used to pick the tiles intersecting a route corridor before searching.
  */
 export function geohashBounds(geohash: string): GeoBounds {
+  if (geohash.length < 1 || geohash.length > 12) {
+    throw new RangeError("geohash length must be from 1 to 12");
+  }
   let latLo = LAT_MIN;
   let latHi = LAT_MAX;
   let lonLo = LON_MIN;
@@ -165,11 +174,20 @@ export function geohashesInBounds(
   bounds: GeoBounds,
   precision: number = TILE_PRECISION,
 ): string[] {
+  if (bounds.minLat > bounds.maxLat || bounds.minLon > bounds.maxLon) {
+    throw new RangeError("bounds must be ordered; split antimeridian queries into two boxes");
+  }
+  encodeGeohash(bounds.maxLat, bounds.maxLon, precision);
   // Step by one cell's dimensions, measured at the box's own latitude — cells
   // narrow toward the poles, so a globally-fixed step would miss tiles.
   const probe = geohashBounds(encodeGeohash(bounds.minLat, bounds.minLon, precision));
   const latStep = probe.maxLat - probe.minLat;
   const lonStep = probe.maxLon - probe.minLon;
+  const estimatedSteps = (Math.ceil((bounds.maxLat - bounds.minLat) / latStep) + 2) *
+    (Math.ceil((bounds.maxLon - bounds.minLon) / lonStep) + 2);
+  if (estimatedSteps > 100_000) {
+    throw new RangeError("geohash query exceeds 100000 cell iterations; use a smaller box or lower precision");
+  }
 
   const seen = new Set<string>();
   for (let lat = bounds.minLat; lat <= bounds.maxLat + latStep; lat += latStep) {

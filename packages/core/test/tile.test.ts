@@ -35,6 +35,37 @@ function loadSet(name: CaseName): TileSet {
 }
 
 describe("Tile header", () => {
+  function altered(change: (view: DataView, tile: Tile) => void): ArrayBuffer {
+    const tile = loadTiles("single-cell")[0]!;
+    const buffer = tile.lat.buffer.slice(0) as ArrayBuffer;
+    change(new DataView(buffer), tile);
+    return buffer;
+  }
+
+  it.each([
+    ["overflowing counts", (v: DataView) => v.setUint32(8, 0xffff_ffff, true)],
+    ["overlapping geometry", (v: DataView) => v.setUint32(28, 64, true)],
+    ["bad bounds", (v: DataView) => v.setFloat32(36, NaN, true)],
+    ["bad geohash", (v: DataView) => v.setUint8(20, 97)],
+    ["unsorted ids", (v: DataView, t: Tile) => v.setUint32(t.globalIds.byteOffset + 4, t.globalIds[0]!, true)],
+    ["invalid coordinate", (v: DataView, t: Tile) => v.setFloat32(t.lat.byteOffset, NaN, true)],
+    ["invalid target", (v: DataView, t: Tile) => v.setUint32(t.fwdTarget.byteOffset, t.nodeCount, true)],
+    ["zero weight", (v: DataView, t: Tile) => v.setUint32(t.fwdWeight.byteOffset, 0, true)],
+    ["invalid CSR sentinel", (v: DataView, t: Tile) => v.setUint32(t.fwdOffset.byteOffset, 1, true)],
+    ["invalid geometry reference", (v: DataView, t: Tile) => v.setUint32(t.fwdGeometry.byteOffset, 1, true)],
+    ["truncated geometry points", (v: DataView, t: Tile) => v.setUint16(t.header.geometryOffset, 0xffff, true)],
+  ] as const)("rejects %s at ingestion", (_name, change) => {
+    expect(() => new Tile(altered(change))).toThrow();
+  });
+
+  it("rejects body truncation and trailing bytes", () => {
+    const buffer = altered(() => {});
+    expect(() => new Tile(buffer.slice(0, -1))).toThrow(/layout|truncated/);
+    const trailing = new Uint8Array(buffer.byteLength + 1);
+    trailing.set(new Uint8Array(buffer));
+    expect(() => new Tile(trailing.buffer)).toThrow(/layout/);
+  });
+
   it("reads magic and version from pipeline output", () => {
     const [tile] = loadTiles("single-cell");
     expect(tile!.header.nodeCount).toBeGreaterThan(0);
@@ -208,6 +239,29 @@ describe("Tile geometry", () => {
 });
 
 describe("TileSet boundaries", () => {
+  it("rejects silent replacement of a resident cell", () => {
+    const original = loadTiles("crossing")[0]!;
+    const replacement = loadTiles("crossing")[0]!;
+    const set = new TileSet();
+    set.add(original);
+    expect(() => set.add(replacement)).toThrow(/already loaded/);
+    expect(set.get(original.geohash)).toBe(original);
+  });
+
+  it("rejects conflicting owners without partially updating its indexes", () => {
+    const original = loadTiles("single-cell")[0]!;
+    const buffer = original.lat.buffer.slice(0) as ArrayBuffer;
+    // A second, otherwise valid tile claiming the same owned global ids.
+    new DataView(buffer).setUint8(20, original.geohash[0] === "s" ? 116 : 115);
+    const conflict = new Tile(buffer);
+    const set = new TileSet();
+    set.add(original);
+    expect(() => set.add(conflict)).toThrow(/conflicting owner/);
+    expect(set.size).toBe(1);
+    expect(set.has(conflict.geohash)).toBe(false);
+    expect(set.resolve(original.globalIds[0]!)?.tile).toBe(original);
+  });
+
   it("resolves a node owned by another loaded tile", () => {
     const set = loadSet("crossing");
     for (const globalId of Object.keys(index.crossing.nodes).map(Number)) {

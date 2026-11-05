@@ -118,7 +118,7 @@ export interface TileHeader {
 
 /** Packs a 6-char geohash into two u32s for the fixed-size header. */
 export function packGeohash(geohash: string): [lo: number, hi: number] {
-  if (geohash.length !== 6) {
+  if (!/^[0123456789bcdefghjkmnpqrstuvwxyz]{6}$/.test(geohash)) {
     throw new Error(`expected geohash-6, got ${geohash.length} chars: ${geohash}`);
   }
   let lo = 0;
@@ -150,7 +150,7 @@ export function readHeader(buffer: ArrayBuffer): TileHeader {
   if (version !== TILE_VERSION) {
     throw new Error(`tile version ${version} unsupported, expected ${TILE_VERSION}`);
   }
-  return {
+  const header: TileHeader = {
     nodeCount: view.getUint32(HEADER_NODE_COUNT, true),
     fwdEdgeCount: view.getUint32(HEADER_FWD_EDGE_COUNT, true),
     revEdgeCount: view.getUint32(HEADER_REV_EDGE_COUNT, true),
@@ -165,4 +165,22 @@ export function readHeader(buffer: ArrayBuffer): TileHeader {
     maxLat: view.getFloat32(HEADER_MAX_LAT, true),
     maxLon: view.getFloat32(HEADER_MAX_LON, true),
   };
+  if (!/^[0123456789bcdefghjkmnpqrstuvwxyz]{6}$/.test(header.geohash)) {
+    throw new Error("invalid tile geohash");
+  }
+  if (![header.minLat, header.minLon, header.maxLat, header.maxLon].every(Number.isFinite) ||
+      header.minLat < -90 || header.maxLat > 90 || header.minLon < -180 || header.maxLon > 180 ||
+      header.minLat >= header.maxLat || header.minLon >= header.maxLon) {
+    throw new Error("invalid tile bounds");
+  }
+  // Check arithmetic before creating any views from untrusted counts.
+  const nodeEnd = HEADER_BYTES + header.nodeCount * 15;
+  const adjacencyStart = nodeEnd + (4 - nodeEnd % 4) % 4;
+  const expectedGeometryOffset = adjacencyStart + 8 * (header.nodeCount + 1) +
+    12 * (header.fwdEdgeCount + header.revEdgeCount);
+  if (header.geometryOffset !== expectedGeometryOffset ||
+      header.geometryOffset + header.geometryBytes !== buffer.byteLength) {
+    throw new Error("invalid tile layout or truncated body");
+  }
+  return header;
 }

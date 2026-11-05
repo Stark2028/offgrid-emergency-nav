@@ -42,9 +42,29 @@ Companion documents:
 
 ---
 
-## Open bugs
+## Map setup and routing follow-up — 2026-11-03
 
-None. All 206 tests pass (88 TypeScript, 118 Python).
+User-approved scope: area-selection/download setup plus the routing fixes from the follow-up audit. Implementation lives on `feat/offline-map-setup`; see IMPLEMENTATION_NOTES.md and docs/MAP_PACKS.md.
+
+- The app now exists under apps/web, with a separate packages/maps installation/storage layer. Three bounded OSM starter areas are supplied; none is described as a full-city map.
+- A* now records valid joins against finite opposite distances, fixing the exact-bound two-node one-way false-unreachable case. Do not restore the settled-only join condition.
+- Graph coordinates are normalized to their serialized Float32 representation before costs and ownership are calculated. Distinct consecutive coincident IDs retain a positive-cost edge. This keeps way continuity and prevents a runtime owner or geometric bound from disagreeing with the builder's coordinate model.
+- The physical binary layout remains v2. Existing datasets must be rebuilt for corrected coordinate costs/ownership. Dataset generation IDs and manifest hashes distinguish the corrected packs; never mix dense IDs from different generations.
+- Escape results retain Map iteration compatibility while adding explicit status/missing/budget metadata and the bounded overlay contract. The independent single-source Dijkstra remains unchanged.
+- All cost fixtures were regenerated. Forty additional precision graphs compare 3,545 serialized queries with independent Python costs; path-cost and consistency assertions remain essential.
+- The starter publisher explicitly selects a conservative walking profile. The original PBF CLI still defaults to motor roads. Preserve this distinction until the larger pipeline is explicitly migrated and validated.
+- Map assets are staged and verified before one transaction publishes their active pointer. A failed replacement must keep the previous map. Never equate download progress or navigator.onLine with offline readiness.
+- The production shell cache ignores Vary only for its own build-pinned/public hashed assets. This is required for offline reload when a host returns Vary: Origin. Pack data bypasses the service-worker response cache and lives in IndexedDB.
+
+## Hardening review — 2026-10-27
+
+See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for the full audit and release blockers. The previous "no open bugs" statement described historical fixture runs, not production readiness.
+
+This pass fixes reverse hazard callback direction, u32 heap-priority overflow, ambiguous budget exhaustion, unchecked hazard costs, malformed tile ingestion, conflicting tile ownership, parallel-road geometry sharing, silent serializer truncation/clamping, vehicle access precedence, and invalid geographic/speed inputs. The graph layout remains v2; regenerate data for corrected access and geometry. Integer edge weights, balanced potentials, oracle independence, capped advisory hazards, and the existing feature deferrals remain intact.
+
+Local results: 139 TypeScript tests and 152 Python tests pass; four real-data tests skip without the generated Delhi dataset. Type checking, emitted ESM/declaration build, public-package import smoke test, and npm audit pass. Fixture regeneration changed the two ladder binaries because parallel shapes are now distinct. No new performance or field-readiness claim is made.
+
+CI now covers both languages and fixture drift. Core exports target generated `dist` files; consumers must build first. `RouteResult.status` distinguishes complete, missing-tiles, and budget-exceeded results; a returned path alone no longer implies a completed search.
 
 ## Fixed bugs
 
@@ -335,3 +355,36 @@ changes:
 - `tools/gen_tile_fixtures.py` — binary tile reader cases
 - `tools/gen_routing_fixtures.py` — adversarial routing graphs, with expected
   costs from an *independent* Dijkstra so a shared bug cannot make both agree
+
+
+## 2026-11-04 ? Android walking pilot and Prayagraj
+
+Added native private SQLite map storage with chunked/batched bridge I/O, native hashing, transactionally activated generations and process-death lease recovery. Added local walking navigation, path-interior connections, a coverage-restricted graph view, worker routing, route geometry, explicit location accuracy/age handling and foreground guidance. Walking way boundaries are preserved to prevent mixing stairs/footway speeds in proportional edge-interior times. Overlapping unconnected paths are rejected at an ambiguous pin.
+
+Published and froze Prayagraj city/Naini/Jhunsi/Phaphamau data. Current pack: 841.80 km?, 9,878,890 bytes, 1,003 files. Updated all walking packs; existing immutable generations are retained. SVG road grouping and batched storage reads avoid city-scale DOM/bridge overhead. Offline journals/leases are coalesced without weakening generation activation.
+
+Android build/lint, core/map/pipeline, data integrity/reference-route and browser acceptance evidence are recorded in IMPLEMENTATION_NOTES.md. Native instrumentation/smoke code exists, but local emulators crashed before boot and no physical device had been verified. Release signing, actual Android/field acceptance, delivery and unimplemented hazard/BLE semantics remain explicit gates in docs/ANDROID_RELEASE.md. Earlier log entries are historical, not current certification.
+
+## 2026-11-04 - Physical Samsung acceptance and two device-found defects
+
+The authorized Samsung Galaxy M53 (Android 15) subsequently passed five native SQLite tests and seven app checks: native bridge, Prayagraj save, private database, force-stop recovery, saved-file verification, WebView-network-disabled routing and Android Back. Actual native screens were inspected. This supersedes the earlier lack of a working native test target; hosted CI and a physical walk are still unclaimed.
+
+The first native test run failed four cases because Capacitor `PluginCall.getLong` accepts `Long` but JSON bridge offsets such as zero arrive as `Integer`. This also prevented real map saves. Replaced bridge numeric reads with finite safe-integer decoding, including optional generation timestamps; retained native JSON/database long reads. Instrumentation now exercises both integer/double representations and rejects fractional/string/null offsets. All five cases pass on the phone.
+
+A real screen tap about a metre from a shared junction produced candidates on two connected edges, but the old 0.1-metre endpoint threshold classified one as an ambiguous overlap. Candidate normalization now intersects real graph endpoint identities within two metres; it cannot join separate crossing levels by coordinates alone. Added a regression for the connected junction and retained the unconnected-overlap rejection test. Maps now has 33 passing tests, and all four browser navigation cases pass after the change.
+
+The user granted foreground precise location permission, but the request returned no usable fix. Only that category was recorded; no GPS coordinates or screenshot were retained. No personal app data or phone system settings were changed. Actual GPS guidance, airplane-mode cold start, field access, accessibility, wider lifecycle/device testing and production identity/delivery remain release gates.
+
+## 2026-11-04 - Replace city-scale SVG map interaction
+
+The user reported jerky dragging and zooming. Grouping roads into a few SVG paths had reduced DOM nodes but did not remove viewBox repaint cost: the Samsung's three repeated-drag baseline runs had p95 frame intervals of 216.6, 200.2 and 200.1 ms. The map also updated React state and label placement per pointer movement.
+
+Preview 0.2.1 (versionCode 2) replaces the coverage/navigation renderer with locally bundled MapLibre GL JS 6.16.0. Worker tiling, level-of-detail drawing and GPU rendering replace the whole-map SVG view changes; the engine owns pan/pinch/inertia. The route graph, checksummed data and private storage are retained. Renderer worker, local fonts and notices are included in the offline shell/APK. A CSS layer conflict initially prevented pointer events reaching the canvas; placing vendor CSS in an explicit lower layer corrected it. Subsequent browser route and drag checks pass.
+
+Debug/optimized builds and Android lint passed, all 12 browser scenarios passed, and the added drag regressions passed on desktop/mobile. The debug update was installed preserving the saved map. The phone locked during the build, suspending rAF and click-stability checks; those incomplete measurements were not used as performance evidence. The user subsequently unlocked it; the completed follow-up is recorded below.
+
+## 2026-11-05 - Physical WebGL performance and acceptance completed
+
+On the awake, foreground Samsung, all three repeated-drag runs had median/p95 frame intervals of 16.7/16.8 ms. No interval among 557 samples exceeded 25 ms, compared with 76/123 in the SVG baseline (p95 about 200-217 ms). The comparison includes ADB command gaps and uses a WebGL magnification 5.3% closer than SVG; it is device-specific cadence evidence, not a universal FPS guarantee.
+
+Eight updated-app checks passed, including native private files, force-stop recovery, WebView-network-disabled routing, actual two-touch pinch input and Back. The optimized development-key copy passed five accessibility-driven checks with WebView debugging disabled and remains installed. The read-back installed APK hash matched the local test copy. No GPS request, data clearing or system-setting change was made. Detailed evidence and hashes: docs/DEVICE_TEST_2026-11-05.md and docs/MAP_RENDERING.md. Original field/release gates remain open.
